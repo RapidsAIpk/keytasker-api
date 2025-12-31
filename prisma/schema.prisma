@@ -1,0 +1,641 @@
+// KeyTasker - Prisma Schema for MongoDB
+// Microtask Platform for Message Evaluation
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// MEDIA MODEL
+model Media {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  fileUrl   String
+  fileType  String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  user      User[]
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  email         String        @unique
+  password      String?
+  firstName     String
+  lastName      String
+  userName      String?
+  role          UserRole      @default(User)
+  accountStatus AccountStatus @default(Active)
+
+  // Profile
+  profilePicture String?
+  phoneNumber    String?
+  country        String?
+
+  // Earnings & Statistics
+  totalEarnings   Float @default(0)
+  pendingEarnings Float @default(0)
+  withdrawnAmount Float @default(0)
+  tasksCompleted  Int   @default(0)
+  tasksRejected   Int   @default(0)
+  rejectionRate   Float @default(0)
+
+  // Moderation
+  canModerate       Boolean   @default(false)
+  moderatorSince    DateTime?
+  moderatorVotes    Int       @default(0)
+  moderatorAccuracy Float     @default(0)
+
+  // Suspension
+  suspensionEndDate DateTime?
+  suspensionReason  String?
+  warningsCount     Int       @default(0)
+
+  // Timestamps
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @default(now()) @updatedAt
+  deletedAt            DateTime?
+  lastLogin            DateTime?
+  mediaId              String?                   @db.ObjectId
+  // Relations
+  media                Media?                    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  submissions          TaskSubmission[]
+  moderationVotes      ModerationVote[]
+  payments             Payment[]
+  supportTickets       SupportTicket[]
+  ticketResponses      TicketResponse[]
+  userIdeas            UserIdea[]
+  notifications        Notification[]
+  activityLogs         ActivityLog[]
+  suspensionHistory    SuspensionHistory[]
+  reservations         TaskReservation[]
+  campaignInteractions UserCampaignInteraction[]
+  resetTokens          ResetToken[]
+  deviceInfo           DeviceInfo?
+}
+
+model ResetToken {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String    @db.ObjectId
+  isUsed    Boolean   @default(false)
+  token     String    @unique
+  expiry    DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model DeviceInfo {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  ipAddress  String
+  deviceInfo String
+  counter    Int       @default(1)
+  status     String    @default("Active")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+  deletedAt  DateTime?
+  user       User?     @relation(fields: [userId], references: [id])
+  userId     String?   @unique @db.ObjectId
+}
+
+// ============================================
+// TASK MANAGEMENT
+// ============================================
+
+model Campaign {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  status      Status    @default(Active)
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  tasks            Task[]
+  // Add this line to Campaign relations:
+  userInteractions UserCampaignInteraction[]
+}
+
+model Task {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Task Details
+  taskType             TaskType
+  recipient            String
+  topicInstruction     String
+  detailedInstructions String?
+
+  // Payments
+  basePayment  Float @default(1)
+  bonusPayment Float @default(4)
+
+  // Quantity & Stats
+  totalQuantity         Int
+  completedCount        Int   @default(0)
+  approvedCount         Int   @default(0)
+  rejectedCount         Int   @default(0)
+  averageCompletionTime Int?
+  approvalRate          Float @default(0)
+
+  // Campaign (hidden from users)
+  campaignId String   @db.ObjectId
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  // Status
+  status TaskStatus @default(Active)
+
+  // Admin info
+  createdBy   String
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  submissions  TaskSubmission[]
+  reservations TaskReservation[]
+}
+
+model TaskReservation {
+  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String            @db.ObjectId
+  user        User              @relation(fields: [userId], references: [id])
+  taskId      String            @db.ObjectId
+  task        Task              @relation(fields: [taskId], references: [id])
+  status      ReservationStatus @default(Reserved)
+  reservedAt  DateTime          @default(now())
+  expiresAt   DateTime
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @default(now()) @updatedAt
+  deletedAt   DateTime?
+}
+
+model UserCampaignInteraction {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  campaignId String   @db.ObjectId
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  // Track first interaction
+  firstInteractionAt DateTime @default(now())
+
+  // Metadata
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+
+  @@unique([userId, campaignId])
+  @@index([userId])
+  @@index([campaignId])
+}
+
+// ============================================
+// TASK SUBMISSIONS
+// ============================================
+
+model TaskSubmission {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Basic Info
+  taskId String @db.ObjectId
+  task   Task   @relation(fields: [taskId], references: [id])
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  // Submission Data
+  screenshotUrl     String
+  aiDetectionAnswer Boolean
+  reasonText        String
+
+  // Bonus Submission
+  isBonusSubmission  Boolean   @default(false)
+  bonusScreenshotUrl String?
+  bonusSubmittedAt   DateTime?
+
+  // Status
+  status SubmissionStatus @default(PendingModeration)
+
+  // Moderation
+  totalVotes           Int     @default(0)
+  approveVotes         Int     @default(0)
+  rejectVotes          Int     @default(0)
+  needsAdditionalVotes Boolean @default(false)
+
+  // Payment
+  basePaymentAwarded  Boolean @default(false)
+  bonusPaymentAwarded Boolean @default(false)
+  totalPayment        Float   @default(0)
+
+  // Timestamps
+  submittedAt DateTime  @default(now())
+  reviewedAt  DateTime?
+  finalizedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  moderationVotes ModerationVote[]
+}
+
+// ============================================
+// MODERATION SYSTEM
+// ============================================
+
+model ModerationVote {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  submissionId String         @db.ObjectId
+  submission   TaskSubmission @relation(fields: [submissionId], references: [id])
+
+  moderatorId String @db.ObjectId
+  moderator   User   @relation(fields: [moderatorId], references: [id])
+
+  decision   VoteDecision
+  comment    String?
+  wasCorrect Boolean?
+
+  votedAt   DateTime  @default(now())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+
+  @@unique([submissionId, moderatorId])
+}
+
+// ============================================
+// PAYMENTS
+// ============================================
+
+model Payment {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount        Float
+  currency      String        @default("USD")
+  paymentMethod PaymentMethod @default(ManualCSV)
+  status        PaymentStatus @default(Pending)
+
+  // Task breakdown
+  basePayments   Float @default(0)
+  bonusPayments  Float @default(0)
+  moderationFees Float @default(0)
+
+  // Admin review
+  reviewedBy          String?
+  reviewedAt          DateTime?
+  reviewNotes         String?
+  flaggedAsSuspicious Boolean   @default(false)
+
+  // Processing
+  processedAt   DateTime?
+  transactionId String?
+
+  // References
+  submissionIds String[] @db.ObjectId
+
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+// ============================================
+// SUPPORT & IDEAS
+// ============================================
+
+model SupportTicket {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  subject  String
+  message  String
+  category String?
+  priority TicketPriority @default(Medium)
+  status   TicketStatus   @default(Open)
+
+  // Manager handling
+  assignedTo String?
+
+  // Timestamps
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+  deletedAt  DateTime?
+  resolvedAt DateTime?
+
+  // Relations
+  responses TicketResponse[]
+}
+
+model TicketResponse {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  ticketId String        @db.ObjectId
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id])
+
+  responderId String @db.ObjectId
+  responder   User   @relation(fields: [responderId], references: [id])
+
+  message         String
+  isStaffResponse Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+model UserIdea {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  title       String
+  description String
+  category    String?
+  status      IdeaStatus @default(Pending)
+
+  // Manager review
+  reviewedBy  String?
+  reviewNotes String?
+  reviewedAt  DateTime?
+
+  // Voting
+  upvotes   Int @default(0)
+  downvotes Int @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  type    NotificationType
+  title   String
+  message String
+  link    String?
+
+  isRead Boolean   @default(false)
+  readAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+// ============================================
+// ADMIN & ANALYTICS
+// ============================================
+
+model ActivityLog {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String? @db.ObjectId
+  user   User?   @relation(fields: [userId], references: [id])
+
+  activityType ActivityType
+  description  String
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+model SuspensionHistory {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  reason         String
+  suspendedBy    String
+  suspensionType String?
+
+  // Appeal
+  appealSubmitted  Boolean   @default(false)
+  appealMessage    String?
+  appealReviewedBy String?
+  appealApproved   Boolean?
+  appealReviewedAt DateTime?
+
+  suspendedAt DateTime  @default(now())
+  endsAt      DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  deletedAt   DateTime?
+}
+
+model PlatformSettings {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Payment settings
+  minimumWithdrawal    Float @default(10)
+  baseTaskPayment      Float @default(1)
+  bonusTaskPayment     Float @default(4)
+  moderationFeePerVote Float @default(0.05)
+
+  // Quality control
+  moderatorMinimumEarnings Float @default(25)
+  suspensionThreshold      Float @default(0.25)
+  moderatorAccuracyMin     Float @default(0.75)
+
+  // Task limits
+  minVotesRequired Int @default(3)
+  maxVotesRequired Int @default(5)
+
+  // Time limits
+  taskReservationMinutes Int @default(60)
+  moderationTimeoutHours Int @default(24)
+
+  // Features
+  allowTaskReservations Boolean @default(true)
+  allowUserIdeas        Boolean @default(true)
+  maintenanceMode       Boolean @default(false)
+
+  updatedBy String
+  updatedAt DateTime  @updatedAt
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+}
+
+model DailyStatistics {
+  id   String   @id @default(auto()) @map("_id") @db.ObjectId
+  date DateTime @unique
+
+  // User stats
+  newUsers       Int @default(0)
+  activeUsers    Int @default(0)
+  suspendedUsers Int @default(0)
+
+  // Task stats
+  tasksCreated   Int @default(0)
+  tasksCompleted Int @default(0)
+  tasksApproved  Int @default(0)
+  tasksRejected  Int @default(0)
+
+  // Moderation stats
+  moderationsCompleted  Int   @default(0)
+  averageModerationTime Float @default(0)
+
+  // Financial stats
+  totalPaidOut    Float @default(0)
+  pendingPayments Float @default(0)
+
+  // Quality stats
+  averageApprovalRate       Float @default(0)
+  averageTaskCompletionTime Float @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  User
+  Moderator
+  Manager
+  Admin
+}
+
+enum AccountStatus {
+  Active
+  Suspended
+  Banned
+}
+
+enum TaskType {
+  Email
+  Fiverr
+  TikTok
+  Instagram
+  WhatsApp
+  Other
+}
+
+enum TaskStatus {
+  Active
+  Paused
+  Completed
+  Archived
+}
+
+enum Status {
+  Active
+  InActive
+}
+
+enum ReservationStatus {
+  Reserved
+  InProgress
+  Completed
+  Expired
+  Cancelled
+}
+
+enum SubmissionStatus {
+  PendingModeration
+  Approved
+  Rejected
+  UnderReview
+}
+
+enum VoteDecision {
+  Approve
+  Reject
+}
+
+enum PaymentStatus {
+  Pending
+  Processing
+  Completed
+  Failed
+  Refunded
+}
+
+enum PaymentMethod {
+  ManualCSV
+  PayPal
+  Stripe
+  BankTransfer
+  Other
+}
+
+enum TicketStatus {
+  Open
+  InProgress
+  Resolved
+  Closed
+}
+
+enum TicketPriority {
+  Low
+  Medium
+  High
+  Urgent
+}
+
+enum IdeaStatus {
+  Pending
+  Approved
+  Rejected
+  Implemented
+}
+
+enum NotificationType {
+  TaskApproved
+  TaskRejected
+  PaymentProcessed
+  SuspensionWarning
+  SuspensionNotice
+  ModeratorAccess
+  NewTasksAvailable
+  SupportResponse
+  IdeaReviewed
+}
+
+enum ActivityType {
+  TaskCreated
+  TaskEdited
+  TaskDeleted
+  UserSuspended
+  UserBanned
+  UserUnbanned
+  PaymentReviewed
+  ModeratorFlagged
+  SettingsChanged
+}
