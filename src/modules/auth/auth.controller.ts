@@ -17,6 +17,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from '@modules/user/dto/verify-email.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -27,7 +28,10 @@ export class AuthController {
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
-
+  @Post('verify-email')
+  async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto) {
+    return this.authService.verifyEmail(verifyEmailDto);
+  }
   @UseGuards(LocalAuthGuard)
   @Post('login')
   @ApiBody({ type: LoginDto })
@@ -50,7 +54,7 @@ export class AuthController {
 
   @Get('forgot-password/:email')
   forgotPassword(@Param('email') email: string) {
-    return this.authService.forgotPassword(email);
+    return this.authService.forgotPassword(email.toLocaleLowerCase());
   }
 
   @Get('reset-password-token/:userId/:token')

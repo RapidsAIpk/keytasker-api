@@ -22,6 +22,7 @@ import { LogoutDto } from './dto/logout.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserRole, AccountStatus, Prisma } from '@prisma/client';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 
 @Injectable()
 export class UserService {
@@ -102,39 +103,92 @@ export class UserService {
     }
   }
 
-  async register(registerDto: RegisterDto) {
-    try {
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email: registerDto.email },
-      });
+async register(registerDto: RegisterDto) {
+  try {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: registerDto.email.toLocaleLowerCase() },
+    });
 
-      if (existingUser) {
-        throw new BadRequestException('Email already exists');
-      }
-
-      let hashPassword: any = await encryptPassword(registerDto.password);
-
-      const user = await this.prisma.user.create({
-        data: {
-          firstName: registerDto.firstName,
-          lastName: registerDto.lastName,
-          userName: registerDto.userName,
-          email: registerDto.email,
-          password: hashPassword,
-          profilePicture: registerDto.profilePicture,
-          phoneNumber: registerDto.phoneNumber,
-          country: registerDto.country,
-          role: UserRole.User,
-          accountStatus: AccountStatus.Active,
-        },
-      });
-
-      return user;
-    } catch (error) {
-      throw error;
+    if (existingUser) {
+      return {
+        success: false,
+        message: 'Email already exists',
+      };
     }
-  }
 
+    let hashPassword: any = await encryptPassword(registerDto.password);
+    const emailVerificationCode = Math.floor(100000 + Math.random() * 900000);
+    
+    const user = await this.prisma.user.create({
+      data: {
+        firstName: registerDto.firstName,
+        lastName: registerDto.lastName,
+        userName: registerDto.userName,
+        email: registerDto.email,
+        password: hashPassword,
+        profilePicture: registerDto.profilePicture,
+        phoneNumber: registerDto.phoneNumber,
+        country: registerDto.country,
+        role: UserRole.User,
+        accountStatus: AccountStatus.Active,
+        emailVerificationCode: emailVerificationCode,
+      },
+    });
+
+    console.log(
+      `${emailVerificationCode} is your verification code Regards Key Tasker Team`,
+    );
+    
+    try {
+      await sendEmail(
+        user.email,
+        'Email Verification',
+        `Hello ${user.firstName} ${user.lastName}, ${emailVerificationCode} is your verification code. Regards, Key Tasker Team`,
+      );
+    } catch (e) {
+      console.error('Email send failed:', e);
+    }
+
+    return {
+      success: true,
+      message: 'email verification code sent successfully!',
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+  async verifyEmail(dto: VerifyEmailDto) {
+    // Find the user by email
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email.toLocaleLowerCase() },
+    });
+    let updated: any;
+
+    // If the user is not found, throw an error
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // If the verification code does not match, throw an error
+    if (user.emailVerificationCode !== dto.emailVerificationCode) {
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    // Update the user's email verification status
+    updated = await this.prisma.user.update({
+      where: { email: dto.email.toLocaleLowerCase() },
+      data: {
+        emailVerified: true,
+        emailVerificationCode: null,
+      },
+    });
+
+    // Exclude password from the user data before returning
+    const { password, ...safeUser } = updated;
+
+    // Always return the safeUser regardless of the blockchain result
+    return { safeUser };
+  }
   async getDeviceInfoByUserId(userId: string) {
     const devices = await this.prisma.deviceInfo.findMany({
       where: {
@@ -152,7 +206,7 @@ export class UserService {
   async findByEmail(email: string) {
     return await this.prisma.user.findUnique({
       where: {
-        email,
+        email: email.toLocaleLowerCase(),
       },
     });
   }
@@ -169,7 +223,7 @@ export class UserService {
         throw new NotFoundException('User not found');
       }
 
-      const userWithEmail = await this.findByEmail(email);
+      const userWithEmail = await this.findByEmail(email.toLocaleLowerCase());
       if (userWithEmail && userWithEmail.id !== id) {
         throw new BadRequestException('User with this email already exists!');
       }
@@ -180,7 +234,7 @@ export class UserService {
           firstName,
           lastName,
           userName,
-          email,
+          email: email.toLocaleLowerCase(),
           profilePicture,
           phoneNumber,
           country,

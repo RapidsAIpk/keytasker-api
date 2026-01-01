@@ -1,11 +1,11 @@
 import * as sgMail from '@sendgrid/mail';
 import { CloudinaryResult } from '@config/constants';
 // import { sendgridApiKey } from '../env/keys';
-import { adminEmail } from '../env/emails';
+// import { adminEmail } from '../env/emails';
 import { randonString } from "../constants/variables"
 import * as fs from 'fs';
 import { writeFile } from 'fs/promises'
-
+import * as nodemailer from 'nodemailer';
 
 import {
   cloudinaryAPIKey,
@@ -14,6 +14,12 @@ import {
 } from '@config/env/keys';
 import { AnyObject } from '@config/type';
 
+const adminEmail = process.env.ADMIN_EMAIL;
+const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+// console.log("admin email is ",process.env.ADMIN_EMAIL);
+if (!adminEmail) {
+  throw new Error("Missing required env var: ADMIN_EMAIL");
+}
 // sgMail.setApiKey(sendgridApiKey);
 const bcrypt = require('bcrypt');
 const KJUR = require('jsrsasign');
@@ -119,23 +125,56 @@ const uploadBuffer = (buffer: any, folder: string, mimetype: string) => {
     streamifier.createReadStream(buffer).pipe(cld_upload_stream);
   }) as Promise<CloudinaryResult>;
 };
+// sendGrid mail
+// const sendEmail = async (to: string, subject: string, emailContent: any) => {
+//   try {
+//     const message = {
+//       to: to,
+//       from: adminEmail,
+//       subject: subject,
+//       html: emailContent,
+//     };
+//     // const email = await sgMail.send(message);
 
-const sendEmail = async (to: string, subject: string, emailContent: any) => {
+//     console.log({ message });
+//   } catch (error) {
+//     console.error('error~~~>', error);
+//     throw error;
+//   }
+// };
+
+
+// nodemailer mail
+const sendEmail = async (to: string, subject: string, emailContent: string) => {
   try {
-    const message = {
+    // Create a transporter using Gmail's SMTP server
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: adminEmail,
+        pass: gmailAppPassword, // Replace with your Gmail app password or your email password
+      },
+    });
+
+    // Define the email message options
+    const mailOptions = {
       to: to,
       from: adminEmail,
       subject: subject,
-      html: emailContent,
+      html: emailContent, // HTML content of the email
     };
-    // const email = await sgMail.send(message);
 
-    console.log({ message });
+    // Send the email
+    const info = await transporter.sendMail(mailOptions);
+
+    console.log(`Email sent successfully to ${to} with subject: ${subject}`);
+    console.log(info);
   } catch (error) {
-    console.error('error~~~>', error);
+    console.error('Error sending email:', error);
     throw error;
   }
 };
+
 const generateRandomPassword = async (length: number) => {
   const charset = randonString;
   let password = '';

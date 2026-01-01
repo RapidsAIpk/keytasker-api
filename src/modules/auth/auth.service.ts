@@ -16,6 +16,9 @@ import { RegisterDto } from './dto/register.dto';
 import { UserRole, AccountStatus, Prisma } from '@prisma/client';
 // import { adminUrl, ownerUrl } from '@config/env';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import e from 'express';
+import { VerifyEmailDto } from '@modules/user/dto/verify-email.dto';
+const frontendUrl = process.env.FRONTEND_URL;
 @Injectable()
 export class AuthService {
   constructor(
@@ -24,19 +27,20 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async register(registerDto: RegisterDto) {
-    const emailFound = await this.userService.findByEmail(registerDto.email);
-    if (registerDto.email && registerDto.password) {
-      if (emailFound) throw new BadRequestException('email already exists');
-    }
-
-    const user = await this.userService.register(registerDto);
-
-    const { password, ...userDto } = user;
-
+async register(registerDto: RegisterDto) {
+  const user = await this.userService.register(registerDto);
+  if (user.success){
+    return {message:user.message,success:true};
+  }else{
+    return {message:user.message,success:false};
+  }
+}
+    async verifyEmail(verifyEmailDto: VerifyEmailDto) {
+    const user = await this.userService.verifyEmail(verifyEmailDto);
+    
     return {
-      accessToken: this.getAccessToken(userDto),
-      userDto,
+      userDto: user.safeUser,
+      accessToken: this.getAccessToken(user.safeUser),
     };
   }
   async login(loginDto: LoginDto, req: any) {
@@ -150,14 +154,14 @@ export class AuthService {
       //   portalUrl = ownerUrl;
       // }
 
-      // await sendEmail(
-      //   user.email,
-      //   'Reset password',
-      //   `Follow the link below to reset your password:
-      //   http://localhost:3000/update-password?id=${user.id}&token=${resetToken}`,
-      // );
-      // console.log(`Follow the link below to reset your password:
-      // ${portalUrl}/auth/reset-password?id=${user.id}&token=${resetToken}`);
+      await sendEmail(
+        user.email,
+        'Reset password',
+        `Follow the link below to reset your password:
+        http://localhost:3000/update-password?id=${user.id}&token=${resetToken}`,
+      );
+      console.log(`Follow the link below to reset your password:
+      ${frontendUrl}/auth/reset-password?id=${user.id}&token=${resetToken}`);
 
       // await sendEmail(
       //   user.email,
