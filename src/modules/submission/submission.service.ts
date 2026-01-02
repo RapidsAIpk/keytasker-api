@@ -268,8 +268,7 @@ export class SubmissionService {
             user: {
               select: {
                 id: true,
-                firstName: true,
-                lastName: true,
+                fullName: true,
                 email: true,
               },
             },
@@ -278,8 +277,7 @@ export class SubmissionService {
                 moderator: {
                   select: {
                     id: true,
-                    firstName: true,
-                    lastName: true,
+                    fullName: true,
                   },
                 },
               },
@@ -315,8 +313,7 @@ export class SubmissionService {
           user: {
             select: {
               id: true,
-              firstName: true,
-              lastName: true,
+              fullName: true,
               email: true,
             },
           },
@@ -325,8 +322,7 @@ export class SubmissionService {
               moderator: {
                 select: {
                   id: true,
-                  firstName: true,
-                  lastName: true,
+                  fullName: true,
                 },
               },
             },

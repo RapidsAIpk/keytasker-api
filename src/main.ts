@@ -13,9 +13,13 @@ async function bootstrap() {
     .setTitle('Keytasker API')
     .setDescription('Microtask Platform REST APIs Documentation')
     .setVersion('1.0')
-    // .addTag('tasks')
-    // .addTag('submissions')
-    // .addTag('moderation')
+    .addTag('App')
+    .addTag('auth')
+    .addTag('user')
+    .addTag('media')
+    .addTag('tasks')
+    .addTag('submissions')
+    .addTag('campaigns')
     // .addTag('payments')
     .build();
 

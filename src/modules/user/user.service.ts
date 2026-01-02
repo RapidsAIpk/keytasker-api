@@ -29,9 +29,7 @@ export class UserService {
   constructor(private prisma: PrismaService) {}
 
   async createAdmin(data: {
-    firstName: string;
-    lastName: string;
-    userName: string;
+    fullName: string;
     email: string;
     password: string;
     role: UserRole;
@@ -49,9 +47,7 @@ export class UserService {
 
       const newAdmin = await this.prisma.user.create({
         data: {
-          firstName: data.firstName,
-          lastName: data.lastName,
-          userName: data.userName,
+          fullName: data.fullName,
           email: data.email,
           password: hashPassword,
           role: UserRole.Admin,
@@ -67,9 +63,7 @@ export class UserService {
   }
 
   async registerManager(data: {
-    firstName: string;
-    lastName: string;
-    userName: string;
+    fullName: string;
     email: string;
     password: string;
   }) {
@@ -86,9 +80,7 @@ export class UserService {
 
       const newManager = await this.prisma.user.create({
         data: {
-          firstName: data.firstName,
-          lastName: data.lastName,
-          userName: data.userName,
+          fullName: data.fullName,
           email: data.email,
           password: hashPassword,
           role: UserRole.Manager,
@@ -121,9 +113,7 @@ async register(registerDto: RegisterDto) {
     
     const user = await this.prisma.user.create({
       data: {
-        firstName: registerDto.firstName,
-        lastName: registerDto.lastName,
-        userName: registerDto.userName,
+        fullName: registerDto.fullName,
         email: registerDto.email,
         password: hashPassword,
         profilePicture: registerDto.profilePicture,
@@ -143,7 +133,7 @@ async register(registerDto: RegisterDto) {
       await sendEmail(
         user.email,
         'Email Verification',
-        `Hello ${user.firstName} ${user.lastName}, ${emailVerificationCode} is your verification code. Regards, Key Tasker Team`,
+        `Hello ${user.fullName}, ${emailVerificationCode} is your verification code. Regards, Key Tasker Team`,
       );
     } catch (e) {
       console.error('Email send failed:', e);
@@ -213,7 +203,7 @@ async register(registerDto: RegisterDto) {
 
   async update(updateUserDto: UpdateUserDto) {
     try {
-      const { id, email, firstName, lastName, userName, profilePicture, phoneNumber, country } = updateUserDto;
+      const { id, email, fullName, profilePicture, phoneNumber, country } = updateUserDto;
 
       const existingUser = await this.prisma.user.findUnique({
         where: { id },
@@ -231,9 +221,7 @@ async register(registerDto: RegisterDto) {
       const updatedUser = await this.prisma.user.update({
         where: { id },
         data: {
-          firstName,
-          lastName,
-          userName,
+          fullName,
           email: email.toLocaleLowerCase(),
           profilePicture,
           phoneNumber,

@@ -40,7 +40,7 @@ async register(registerDto: RegisterDto) {
     
     return {
       userDto: user.safeUser,
-      accessToken: this.getAccessToken(user.safeUser),
+      accessToken: this.getAccessToken(user.safeUser, false),
     };
   }
   async login(loginDto: LoginDto, req: any) {
@@ -62,7 +62,7 @@ async register(registerDto: RegisterDto) {
 
       await this.userService.saveDeviceInfo(saveDeviceInfoDto);
 
-      const accessToken = this.getAccessToken(user);
+      const accessToken = this.getAccessToken(user, loginDto.rememberMe || false);
 
       return {
         accessToken: accessToken,
@@ -138,7 +138,7 @@ async register(registerDto: RegisterDto) {
           HttpStatus.FORBIDDEN,
         );
       }
-      const resetToken = await this.getAccessToken({ userId: user.id });
+      const resetToken = await this.getAccessToken({ userId: user.id }, false);
 
       let resetTokenExpiry = new Date(Date.now() + 3600000);
       await this.userService.createResetToken(
@@ -228,7 +228,7 @@ async register(registerDto: RegisterDto) {
           const newUser = user;
 
           return {
-            access_token: this.getAccessToken(newUser),
+            access_token: this.getAccessToken(newUser, false),
             newUser,
             message: 'User is logged in successfully!',
           };
@@ -251,7 +251,7 @@ async register(registerDto: RegisterDto) {
     });
     console.log('resp', resp);
     return {
-      accessToken: this.getAccessToken(resp),
+      accessToken: this.getAccessToken(resp , false),
       userDto: resp,
     };
   }
@@ -260,7 +260,10 @@ async register(registerDto: RegisterDto) {
     return this.jwtService.verifyAsync(token);
   }
 
-  getAccessToken(params: any) {
-    return this.jwtService?.sign(params);
+  getAccessToken(params: any, rememberMe: boolean = false): string {
+    const options = {
+      expiresIn: rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60,
+    };
+    return this.jwtService.sign(params, options);
   }
 }

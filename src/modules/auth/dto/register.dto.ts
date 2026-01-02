@@ -4,15 +4,7 @@ import { IsNotEmpty, IsEmail, IsOptional } from 'class-validator';
 export class RegisterDto {
   @ApiProperty()
   @IsNotEmpty()
-  firstName: string;
-
-  @ApiProperty()
-  @IsNotEmpty()
-  lastName: string;
-
-  @ApiProperty()
-  @IsOptional()
-  userName?: string;
+  fullName: string;
 
   @ApiProperty()
   @IsEmail()

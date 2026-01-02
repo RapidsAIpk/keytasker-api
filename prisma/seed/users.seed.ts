@@ -24,9 +24,7 @@ export class UserSeed {
 
       if (!adminExists) {
         await this.userService.createAdmin({
-          firstName: 'Keytasker',
-          lastName: 'Admin',
-          userName: 'admin',
+          fullName: 'Keytasker Admin',
           email: 'admin@keytasker.com',
           password: 'Admin123!',
           role: UserRole.Admin,
@@ -40,9 +38,7 @@ export class UserSeed {
 
       if (!managerExists) {
         await this.userService.registerManager({
-          firstName: 'Site',
-          lastName: 'Manager',
-          userName: 'manager',
+          fullName: 'Site Manager',
           email: 'manager@keytasker.com',
           password: 'Manager123!',
         });
@@ -55,9 +51,7 @@ export class UserSeed {
 
       if (!userExists) {
         await this.userService.register({
-          firstName: 'Test',
-          lastName: 'User',
-          userName: 'testuser',
+          fullName: 'Test User',
           email: 'user@keytasker.com',
           password: 'User123!',
         });

@@ -291,8 +291,7 @@ export class TaskService {
               user: {
                 select: {
                   id: true,
-                  firstName: true,
-                  lastName: true,
+                  fullName: true,
                   email: true,
                 },
               },
