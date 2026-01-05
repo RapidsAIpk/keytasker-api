@@ -26,7 +26,7 @@ export class UserSeed {
         await this.userService.createAdmin({
           fullName: 'Keytasker Admin',
           email: 'admin@keytasker.com',
-          password: 'Admin123!',
+          password: 'Admin123',
           role: UserRole.Admin,
         });
       }

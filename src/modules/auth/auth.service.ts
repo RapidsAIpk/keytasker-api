@@ -158,10 +158,10 @@ async register(registerDto: RegisterDto) {
         user.email,
         'Reset password',
         `Follow the link below to reset your password:
-        http://localhost:3000/update-password?id=${user.id}&token=${resetToken}`,
+        http://localhost:3000/auth/updatepassword?id=${user.id}&token=${resetToken}`,
       );
       console.log(`Follow the link below to reset your password:
-      ${frontendUrl}/auth/reset-password?id=${user.id}&token=${resetToken}`);
+      ${frontendUrl}/auth/updatepassword?id=${user.id}&token=${resetToken}`);
 
       // await sendEmail(
       //   user.email,

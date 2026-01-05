@@ -52,6 +52,7 @@ export class UserService {
           password: hashPassword,
           role: UserRole.Admin,
           accountStatus: AccountStatus.Active,
+          emailVerified: true,
         },
       });
 
@@ -85,6 +86,7 @@ export class UserService {
           password: hashPassword,
           role: UserRole.Manager,
           accountStatus: AccountStatus.Active,
+          emailVerified: true,
         },
       });
 
@@ -95,58 +97,58 @@ export class UserService {
     }
   }
 
-async register(registerDto: RegisterDto) {
-  try {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: registerDto.email.toLocaleLowerCase() },
-    });
-
-    if (existingUser) {
-      return {
-        success: false,
-        message: 'Email already exists',
-      };
-    }
-
-    let hashPassword: any = await encryptPassword(registerDto.password);
-    const emailVerificationCode = Math.floor(100000 + Math.random() * 900000);
-    
-    const user = await this.prisma.user.create({
-      data: {
-        fullName: registerDto.fullName,
-        email: registerDto.email,
-        password: hashPassword,
-        profilePicture: registerDto.profilePicture,
-        phoneNumber: registerDto.phoneNumber,
-        country: registerDto.country,
-        role: UserRole.User,
-        accountStatus: AccountStatus.Active,
-        emailVerificationCode: emailVerificationCode,
-      },
-    });
-
-    console.log(
-      `${emailVerificationCode} is your verification code Regards Key Tasker Team`,
-    );
-    
+  async register(registerDto: RegisterDto) {
     try {
-      await sendEmail(
-        user.email,
-        'Email Verification',
-        `Hello ${user.fullName}, ${emailVerificationCode} is your verification code. Regards, Key Tasker Team`,
-      );
-    } catch (e) {
-      console.error('Email send failed:', e);
-    }
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: registerDto.email.toLocaleLowerCase() },
+      });
 
-    return {
-      success: true,
-      message: 'email verification code sent successfully!',
-    };
-  } catch (error) {
-    throw error;
+      if (existingUser) {
+        return {
+          success: false,
+          message: 'Email already exists',
+        };
+      }
+
+      let hashPassword: any = await encryptPassword(registerDto.password);
+      const emailVerificationCode = Math.floor(100000 + Math.random() * 900000);
+
+      const user = await this.prisma.user.create({
+        data: {
+          fullName: registerDto.fullName,
+          email: registerDto.email,
+          password: hashPassword,
+          profilePicture: registerDto.profilePicture,
+          phoneNumber: registerDto.phoneNumber,
+          country: registerDto.country,
+          role: UserRole.User,
+          accountStatus: AccountStatus.Active,
+          emailVerificationCode: emailVerificationCode,
+        },
+      });
+
+      console.log(
+        `${emailVerificationCode} is your verification code Regards Key Tasker Team`,
+      );
+
+      try {
+        await sendEmail(
+          user.email,
+          'Email Verification',
+          `Hello ${user.fullName}, ${emailVerificationCode} is your verification code. Regards, Key Tasker Team`,
+        );
+      } catch (e) {
+        console.error('Email send failed:', e);
+      }
+
+      return {
+        success: true,
+        message: 'email verification code sent successfully!',
+      };
+    } catch (error) {
+      throw error;
+    }
   }
-}
   async verifyEmail(dto: VerifyEmailDto) {
     // Find the user by email
     const user = await this.prisma.user.findUnique({
@@ -203,7 +205,8 @@ async register(registerDto: RegisterDto) {
 
   async update(updateUserDto: UpdateUserDto) {
     try {
-      const { id, email, fullName, profilePicture, phoneNumber, country } = updateUserDto;
+      const { id, email, fullName, profilePicture, phoneNumber, country } =
+        updateUserDto;
 
       const existingUser = await this.prisma.user.findUnique({
         where: { id },
