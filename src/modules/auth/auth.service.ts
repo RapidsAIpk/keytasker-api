@@ -27,17 +27,17 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-async register(registerDto: RegisterDto) {
-  const user = await this.userService.register(registerDto);
-  if (user.success){
-    return {message:user.message,success:true};
-  }else{
-    return {message:user.message,success:false};
+  async register(registerDto: RegisterDto) {
+    const user = await this.userService.register(registerDto);
+    if (user.success) {
+      return { message: user.message, success: true };
+    } else {
+      return { message: user.message, success: false };
+    }
   }
-}
-    async verifyEmail(verifyEmailDto: VerifyEmailDto) {
+  async verifyEmail(verifyEmailDto: VerifyEmailDto) {
     const user = await this.userService.verifyEmail(verifyEmailDto);
-    
+
     return {
       userDto: user.safeUser,
       accessToken: this.getAccessToken(user.safeUser, false),
@@ -53,7 +53,25 @@ async register(registerDto: RegisterDto) {
       if (!user) {
         throw new BadRequestException('Invalid credentials');
       }
+      if (!user.emailVerified) {
+        await this.userService.sendOtpToEmail(user.email);
 
+        throw new BadRequestException(
+          'Email not verified. A new verification code has been sent to your email.',
+        );
+      }
+      if (user.accountStatus === AccountStatus.Banned) {
+        throw new HttpException(
+          'Your account has been blocked, please contact the admin',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      if (user.accountStatus === AccountStatus.Suspended) {
+        throw new HttpException(
+          'Your account has been suspended, please contact the admin',
+          HttpStatus.FORBIDDEN,
+        );
+      }
       const saveDeviceInfoDto: SaveDeviceInfoDto = {
         userId: user.id,
         ipAddress: ipAddress,
@@ -62,7 +80,10 @@ async register(registerDto: RegisterDto) {
 
       await this.userService.saveDeviceInfo(saveDeviceInfoDto);
 
-      const accessToken = this.getAccessToken(user, loginDto.rememberMe || false);
+      const accessToken = this.getAccessToken(
+        user,
+        loginDto.rememberMe || false,
+      );
 
       return {
         accessToken: accessToken,
@@ -251,7 +272,7 @@ async register(registerDto: RegisterDto) {
     });
     console.log('resp', resp);
     return {
-      accessToken: this.getAccessToken(resp , false),
+      accessToken: this.getAccessToken(resp, false),
       userDto: resp,
     };
   }

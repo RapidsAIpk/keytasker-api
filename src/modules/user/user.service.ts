@@ -181,6 +181,28 @@ export class UserService {
     // Always return the safeUser regardless of the blockchain result
     return { safeUser };
   }
+  async sendOtpToEmail(email: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: email },
+    });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+    const emailVerificationCode = Math.floor(100000 + Math.random() * 900000);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationCode: emailVerificationCode,
+      },
+    });
+    await sendEmail(
+      user.email,
+      'Email Verification',
+      `Hello ${user.fullName},` +
+        `${emailVerificationCode} is your verification code`,
+    );
+    return { success: true, message: 'Verification code sent to email' };
+  }
   async getDeviceInfoByUserId(userId: string) {
     const devices = await this.prisma.deviceInfo.findMany({
       where: {
