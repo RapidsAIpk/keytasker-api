@@ -339,40 +339,42 @@ export class UserService {
     }
   }
 
-  async saveDeviceInfo(saveDeviceInfoDto: SaveDeviceInfoDto) {
-    try {
-      const { userId, ipAddress, deviceInfo } = saveDeviceInfoDto;
-      const existingDeviceInfo = await this.prisma.deviceInfo.findFirst({
-        where: {
-          userId,
-          deviceInfo,
+async saveDeviceInfo(saveDeviceInfoDto: SaveDeviceInfoDto) {
+  try {
+    const { userId, ipAddress, deviceInfo } = saveDeviceInfoDto;
+    
+    const existingDeviceInfo = await this.prisma.deviceInfo.findUnique({
+      where: {
+        userId: userId,
+      },
+    });
+
+    if (existingDeviceInfo) {
+      await this.prisma.deviceInfo.update({
+        where: { userId: userId },
+        data: {
+          ipAddress: ipAddress,
+          deviceInfo: deviceInfo,
+          counter: {
+            increment: 1,
+          },
+          status: 'Active',
         },
       });
-
-      if (existingDeviceInfo) {
-        await this.prisma.deviceInfo.update({
-          where: { id: existingDeviceInfo.id },
-          data: {
-            counter: {
-              increment: 1,
-            },
-            status: 'Active',
-          },
-        });
-      } else {
-        await this.prisma.deviceInfo.create({
-          data: {
-            ipAddress,
-            deviceInfo,
-            userId,
-          },
-        });
-      }
-    } catch (error) {
-      console.error('Failed to save device info:', error);
-      throw new Error('Failed to save device info');
+    } else {
+      await this.prisma.deviceInfo.create({
+        data: {
+          ipAddress: ipAddress,
+          deviceInfo: deviceInfo,
+          userId: userId,
+        },
+      });
     }
+  } catch (error) {
+    console.error('Failed to save device info:', error);
+    throw new Error('Failed to save device info');
   }
+}
 
   async findOneUser(id: string) {
     const user = await this.prisma.user.findUnique({
