@@ -1,5 +1,5 @@
 export enum SortEnum {
-  Asce = 'asce',
+  Asc = 'asc',
   Desc = 'desc',
   None = 'none',
 }

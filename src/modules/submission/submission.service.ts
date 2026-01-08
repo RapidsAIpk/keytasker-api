@@ -1,9 +1,16 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { BonusSubmissionDto } from './dto/bonus-submission.dto';
 import { SubmissionAppealDto } from './dto/submission-appeal.dto';
-import { SubmissionStatus, UserRole } from '@prisma/client';
+import { FindAllSubmissionsDto } from './dto/find-all-submissions.dto';
+import { SubmissionStatus, UserRole, Prisma } from '@prisma/client';
+import { SortEnum } from '@config/constants';
 
 @Injectable()
 export class SubmissionService {
@@ -24,7 +31,10 @@ export class SubmissionService {
       }
 
       // Check if user is suspended
-      if (user.accountStatus === 'Suspended' || user.accountStatus === 'Banned') {
+      if (
+        user.accountStatus === 'Suspended' ||
+        user.accountStatus === 'Banned'
+      ) {
         throw new ForbiddenException('Your account is suspended or banned');
       }
 
@@ -45,7 +55,9 @@ export class SubmissionService {
 
       // Check if task has capacity
       if (task.completedCount >= task.totalQuantity) {
-        throw new BadRequestException('This task has reached its completion limit');
+        throw new BadRequestException(
+          'This task has reached its completion limit',
+        );
       }
 
       // Check if user has already submitted this task
@@ -61,18 +73,30 @@ export class SubmissionService {
       }
 
       // Check if user has interacted with this campaign before
-      const campaignInteraction = await this.prisma.userCampaignInteraction.findUnique({
-        where: {
-          userId_campaignId: {
-            userId,
-            campaignId: task.campaignId,
+      const campaignInteraction =
+        await this.prisma.userCampaignInteraction.findUnique({
+          where: {
+            userId_campaignId: {
+              userId,
+              campaignId: task.campaignId,
+            },
           },
-        },
-      });
+        });
 
       if (campaignInteraction) {
-        throw new ForbiddenException('You cannot submit tasks from a campaign you have already interacted with');
+        throw new ForbiddenException(
+          'You cannot submit tasks from a campaign you have already interacted with',
+        );
       }
+
+      // Check if user has an active reservation for this task
+      const reservation = await this.prisma.taskReservation.findFirst({
+        where: {
+          userId,
+          taskId: createSubmissionDto.taskId,
+          status: { in: ['Reserved', 'InProgress'] },
+        },
+      });
 
       // Create submission and campaign interaction in a transaction
       const submission = await this.prisma.$transaction(async (tx) => {
@@ -88,7 +112,15 @@ export class SubmissionService {
             totalPayment: 0, // Will be set after moderation
           },
           include: {
-            task: true,
+            task: {
+              select: {
+                id: true,
+                taskType: true,
+                topicInstruction: true,
+                basePayment: true,
+                bonusPayment: true,
+              },
+            },
           },
         });
 
@@ -109,6 +141,17 @@ export class SubmissionService {
             },
           },
         });
+
+        // Update reservation if exists
+        if (reservation) {
+          await tx.taskReservation.update({
+            where: { id: reservation.id },
+            data: {
+              status: 'Completed',
+              completedAt: new Date(),
+            },
+          });
+        }
 
         return newSubmission;
       });
@@ -149,17 +192,23 @@ export class SubmissionService {
 
       // Verify submission belongs to user
       if (submission.userId !== userId) {
-        throw new ForbiddenException('This submission does not belong to you');
+        throw new ForbiddenException(
+          'This submission does not belong to you',
+        );
       }
 
       // Check if base submission was approved
       if (submission.status !== SubmissionStatus.Approved) {
-        throw new BadRequestException('Base submission must be approved before submitting bonus');
+        throw new BadRequestException(
+          'Base submission must be approved before submitting bonus',
+        );
       }
 
       // Check if bonus already submitted
       if (submission.isBonusSubmission) {
-        throw new BadRequestException('Bonus submission already exists for this task');
+        throw new BadRequestException(
+          'Bonus submission already exists for this task',
+        );
       }
 
       // Update submission with bonus
@@ -175,7 +224,8 @@ export class SubmissionService {
       });
 
       return {
-        message: 'Bonus submission added successfully. It will be reviewed by moderators.',
+        message:
+          'Bonus submission added successfully. It will be reviewed by moderators.',
         submission: updatedSubmission,
       };
     } catch (error) {
@@ -184,50 +234,41 @@ export class SubmissionService {
   }
 
   /**
-   * Get user's submissions
+   * Get user's submissions with filtering and sorting
    */
-  async findMySubmissions(userId: string, page: number = 1, limit: number = 10, status?: SubmissionStatus) {
+async findMySubmissions({ page, sortDto }: FindAllSubmissionsDto, req) {
     try {
-      const skip = (page - 1) * limit;
+      let totalCount = await this.prisma.taskSubmission.count({
+        where: { userId: req.user.id, deletedAt: null },
+      });
 
-      const where: any = {
-        userId,
-        deletedAt: null,
-      };
+      let orderBy: any = {};
 
-      if (status) {
-        where.status = status;
-      }
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['submittedAt'] = SortEnum.Desc;
 
-      const [submissions, totalCount] = await Promise.all([
-        this.prisma.taskSubmission.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { submittedAt: 'desc' },
-          include: {
-            task: {
-              select: {
-                id: true,
-                taskType: true,
-                topicInstruction: true,
-                basePayment: true,
-                bonusPayment: true,
-              },
+      const submissions = await this.prisma.taskSubmission.findMany({
+        where: { userId: req.user.id, deletedAt: null },
+        skip: page ? (page - 1) * 10 : 0,
+        take: page ? 10 : undefined,
+        orderBy,
+        include: {
+          task: {
+            select: {
+              id: true,
+              taskType: true,
+              topicInstruction: true,
+              basePayment: true,
+              bonusPayment: true,
             },
           },
-        }),
-        this.prisma.taskSubmission.count({ where }),
-      ]);
+        },
+      });
 
       return {
+        totalCount,
         submissions,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(totalCount / limit),
-          totalCount,
-          limit,
-        },
       };
     } catch (error) {
       throw error;
@@ -235,86 +276,48 @@ export class SubmissionService {
   }
 
   /**
-   * Get all submissions (Admin/Manager only)
+   * Get all submissions with filtering and sorting (Admin/Manager only)
    */
-  async findAll(userId: string, page: number = 1, limit: number = 10, status?: SubmissionStatus) {
+async findAll({ page, sortDto }: FindAllSubmissionsDto, req) {
     try {
       const user = await this.prisma.user.findUnique({
-        where: { id: userId },
+        where: { id: req.user.id },
       });
 
       if (!user || (user.role !== UserRole.Admin && user.role !== UserRole.Manager)) {
         throw new ForbiddenException('Only admins and managers can view all submissions');
       }
 
-      const skip = (page - 1) * limit;
+      let totalCount = await this.prisma.taskSubmission.count({
+        where: { deletedAt: null },
+      });
 
-      const where: any = {
-        deletedAt: null,
-      };
+      let orderBy: any = {};
 
-      if (status) {
-        where.status = status;
-      }
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['submittedAt'] = SortEnum.Desc;
 
-      const [submissions, totalCount] = await Promise.all([
-        this.prisma.taskSubmission.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { submittedAt: 'desc' },
-          include: {
-            task: true,
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
-            moderationVotes: {
-              include: {
-                moderator: {
-                  select: {
-                    id: true,
-                    fullName: true,
-                  },
-                },
-              },
-            },
-          },
-        }),
-        this.prisma.taskSubmission.count({ where }),
-      ]);
-
-      return {
-        submissions,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(totalCount / limit),
-          totalCount,
-          limit,
-        },
-      };
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Get a single submission
-   */
-  async findOne(id: string, userId: string) {
-    try {
-      const submission = await this.prisma.taskSubmission.findUnique({
-        where: { id },
+      const submissions = await this.prisma.taskSubmission.findMany({
+        where: { deletedAt: null },
+        skip: page ? (page - 1) * 10 : 0,
+        take: page ? 10 : undefined,
+        orderBy,
         include: {
-          task: true,
           user: {
             select: {
               id: true,
               fullName: true,
               email: true,
+            },
+          },
+          task: {
+            select: {
+              id: true,
+              taskType: true,
+              topicInstruction: true,
+              basePayment: true,
+              bonusPayment: true,
             },
           },
           moderationVotes: {
@@ -330,11 +333,20 @@ export class SubmissionService {
         },
       });
 
-      if (!submission) {
-        throw new NotFoundException('Submission not found');
-      }
+      return {
+        totalCount,
+        submissions,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
 
-      // Check if user can access this submission
+  /**
+   * Get a single submission by ID
+   */
+  async findOne(id: string, userId: string) {
+    try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
       });
@@ -343,9 +355,55 @@ export class SubmissionService {
         throw new NotFoundException('User not found');
       }
 
-      // Users can only view their own submissions unless they are admin/manager
-      if (user.role === UserRole.User && submission.userId !== userId) {
-        throw new ForbiddenException('You can only view your own submissions');
+      const submission = await this.prisma.taskSubmission.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+          task: {
+            select: {
+              id: true,
+              taskType: true,
+              recipient: true,
+              topicInstruction: true,
+              detailedInstructions: true,
+              basePayment: true,
+              bonusPayment: true,
+            },
+          },
+          moderationVotes:
+            user.role === UserRole.Admin || user.role === UserRole.Manager
+              ? {
+                  include: {
+                    moderator: {
+                      select: {
+                        id: true,
+                        fullName: true,
+                      },
+                    },
+                  },
+                }
+              : false,
+        },
+      });
+
+      if (!submission) {
+        throw new NotFoundException('Submission not found');
+      }
+
+      // Regular users can only view their own submissions
+      if (
+        user.role === UserRole.User &&
+        submission.userId !== userId
+      ) {
+        throw new ForbiddenException(
+          'You can only view your own submissions',
+        );
       }
 
       return submission;
@@ -355,7 +413,7 @@ export class SubmissionService {
   }
 
   /**
-   * Submit appeal for rejected submission
+   * Submit an appeal for a rejected submission
    */
   async submitAppeal(appealDto: SubmissionAppealDto, userId: string) {
     try {
@@ -368,11 +426,15 @@ export class SubmissionService {
       }
 
       if (submission.userId !== userId) {
-        throw new ForbiddenException('This submission does not belong to you');
+        throw new ForbiddenException(
+          'This submission does not belong to you',
+        );
       }
 
       if (submission.status !== SubmissionStatus.Rejected) {
-        throw new BadRequestException('Only rejected submissions can be appealed');
+        throw new BadRequestException(
+          'Only rejected submissions can be appealed',
+        );
       }
 
       // Update submission status to under review
@@ -396,8 +458,26 @@ export class SubmissionService {
         },
       });
 
+      // Create notification for admins
+      const admins = await this.prisma.user.findMany({
+        where: { role: UserRole.Admin },
+      });
+
+      for (const admin of admins) {
+        await this.prisma.notification.create({
+          data: {
+            userId: admin.id,
+            type: 'SupportResponse',
+            title: 'New Submission Appeal',
+            message: `A user has appealed a rejected submission. Review required.`,
+            link: `/submissions/${appealDto.submissionId}`,
+          },
+        });
+      }
+
       return {
-        message: 'Appeal submitted successfully. An admin will review your submission.',
+        message:
+          'Appeal submitted successfully. An admin will review your submission.',
       };
     } catch (error) {
       throw error;
@@ -497,7 +577,8 @@ export class SubmissionService {
             userId: submission.userId,
             type: 'TaskRejected',
             title: 'Submission Rejected',
-            message: 'Your submission was rejected by moderators. Please review the feedback.',
+            message:
+              'Your submission was rejected by moderators. Please review the feedback.',
             link: `/submissions/${submission.id}`,
           },
         });
@@ -510,7 +591,9 @@ export class SubmissionService {
       await this.prisma.taskSubmission.update({
         where: { id: submissionId },
         data: {
-          status: isApproved ? SubmissionStatus.Approved : SubmissionStatus.Rejected,
+          status: isApproved
+            ? SubmissionStatus.Approved
+            : SubmissionStatus.Rejected,
           basePaymentAwarded: baseAwarded,
           bonusPaymentAwarded: bonusAwarded,
           totalPayment: payment,
@@ -525,8 +608,12 @@ export class SubmissionService {
         _count: true,
       });
 
-      const approved = taskStats.find(s => s.status === SubmissionStatus.Approved)?._count || 0;
-      const rejected = taskStats.find(s => s.status === SubmissionStatus.Rejected)?._count || 0;
+      const approved =
+        taskStats.find((s) => s.status === SubmissionStatus.Approved)?._count ||
+        0;
+      const rejected =
+        taskStats.find((s) => s.status === SubmissionStatus.Rejected)?._count ||
+        0;
       const total = approved + rejected;
 
       if (total > 0) {
@@ -621,6 +708,69 @@ export class SubmissionService {
           message: `Your rejection rate is ${(rejectionRate * 100).toFixed(2)}%. Please improve your submission quality to avoid suspension.`,
         },
       });
+    }
+  }
+
+  /**
+   * Get submission statistics (Admin/Manager only)
+   */
+  async getStats(userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (
+        !user ||
+        (user.role !== UserRole.Admin && user.role !== UserRole.Manager)
+      ) {
+        throw new ForbiddenException(
+          'Only admins and managers can view submission statistics',
+        );
+      }
+
+      const [
+        totalSubmissions,
+        pendingSubmissions,
+        approvedSubmissions,
+        rejectedSubmissions,
+        underReviewSubmissions,
+        bonusSubmissions,
+      ] = await Promise.all([
+        this.prisma.taskSubmission.count(),
+        this.prisma.taskSubmission.count({
+          where: { status: SubmissionStatus.PendingModeration },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { status: SubmissionStatus.Approved },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { status: SubmissionStatus.Rejected },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { status: SubmissionStatus.UnderReview },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { isBonusSubmission: true },
+        }),
+      ]);
+
+      const approvalRate =
+        totalSubmissions > 0
+          ? (approvedSubmissions / totalSubmissions) * 100
+          : 0;
+
+      return {
+        totalSubmissions,
+        pendingSubmissions,
+        approvedSubmissions,
+        rejectedSubmissions,
+        underReviewSubmissions,
+        bonusSubmissions,
+        approvalRate: Number(approvalRate.toFixed(2)),
+      };
+    } catch (error) {
+      throw error;
     }
   }
 }

@@ -1,7 +1,7 @@
 import { SortDto } from '@modules/shared/dto/sort.dto';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class FindAllSubmissionsDto {
+export class FindAllCampaignsDto {
   @ApiProperty()
   page: number;
 
