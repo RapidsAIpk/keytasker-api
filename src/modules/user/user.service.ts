@@ -23,6 +23,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UserRole, AccountStatus, Prisma } from '@prisma/client';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { FindDeletedUsersDto } from './dto/find-deleted-users.dto';
 
 @Injectable()
 export class UserService {
@@ -309,72 +310,276 @@ export class UserService {
     }
   }
 
-  async findAllUsers({ page, sortDto }: FindAllUsersDto, req) {
+  async findAllUsers({ page, limit, sortDto, filters }: FindAllUsersDto, req) {
     try {
-      let totalCount = await this.prisma.user.count({
-        where: { deletedAt: null },
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
+
+      const matchStage: any = {
+        $or: [{ deletedAt: null }, { deletedAt: { $exists: false } }],
+      };
+
+      if (filters) {
+        if (filters.fullName) {
+          matchStage.fullName = { $regex: filters.fullName, $options: 'i' };
+        }
+        if (filters.email) {
+          matchStage.email = { $regex: filters.email, $options: 'i' };
+        }
+        if (filters.role) {
+          matchStage.role = filters.role;
+        }
+        if (filters.accountStatus) {
+          matchStage.accountStatus = filters.accountStatus;
+        }
+        if (filters.country) {
+          matchStage.country = { $regex: filters.country, $options: 'i' };
+        }
+      }
+
+      const totalCountResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [{ $match: matchStage }, { $count: 'total' }],
       });
 
-      let orderBy: any = {};
+      const totalCount = totalCountResult?.[0]?.total || 0;
 
-      if (sortDto?.sort && sortDto?.sort !== 'none')
-        orderBy[sortDto.name] = sortDto.sort;
-      else orderBy['createdAt'] = SortEnum.Desc;
+      let sortStage: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none') {
+        sortStage[sortDto.name] = sortDto.sort === 'asc' ? 1 : -1;
+      } else {
+        sortStage['createdAt'] = -1;
+      }
 
-      const filteredUsers = await this.prisma.user.findMany({
-        where: { deletedAt: null },
-        skip: page ? (page - 1) * 10 : 0,
-        take: page ? 10 : undefined,
-        orderBy,
+      const usersResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [
+          { $match: matchStage },
+          { $sort: sortStage },
+          { $skip: skip },
+          { $limit: pageSize },
+        ],
       });
 
-      const users = filteredUsers.map(({ password, ...u }) => u);
+      const users = (usersResult || []).map(({ password, _id, ...u }: any) => ({
+        id: _id.$oid,
+        email: u.email,
+        fullName: u.fullName,
+        role: u.role,
+        accountStatus: u.accountStatus,
+        emailVerificationCode: u.emailVerificationCode || null,
+        emailVerified: u.emailVerified,
+        profilePicture: u.profilePicture || null,
+        phoneNumber: u.phoneNumber || null,
+        country: u.country || null,
+        totalEarnings: u.totalEarnings,
+        pendingEarnings: u.pendingEarnings,
+        withdrawnAmount: u.withdrawnAmount,
+        tasksCompleted: u.tasksCompleted,
+        tasksRejected: u.tasksRejected,
+        rejectionRate: u.rejectionRate,
+        canModerate: u.canModerate,
+        moderatorSince: u.moderatorSince?.$date || null,
+        moderatorVotes: u.moderatorVotes,
+        moderatorAccuracy: u.moderatorAccuracy,
+        suspensionEndDate: u.suspensionEndDate?.$date || null,
+        suspensionReason: u.suspensionReason || null,
+        warningsCount: u.warningsCount,
+        createdAt: u.createdAt.$date,
+        updatedAt: u.updatedAt.$date,
+        deletedAt: u.deletedAt?.$date || null,
+        lastLogin: u.lastLogin?.$date || null,
+        mediaId: u.mediaId || null,
+      }));
 
       return {
         totalCount,
         users,
+        page: pageNumber,
+        limit: pageSize,
       };
     } catch (error) {
       throw error;
     }
   }
+  async findAllDeletedUsers(
+    { page, limit, sortDto, filters }: FindDeletedUsersDto,
+    req,
+  ) {
+    try {
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
 
-async saveDeviceInfo(saveDeviceInfoDto: SaveDeviceInfoDto) {
-  try {
-    const { userId, ipAddress, deviceInfo } = saveDeviceInfoDto;
-    
-    const existingDeviceInfo = await this.prisma.deviceInfo.findUnique({
-      where: {
-        userId: userId,
-      },
-    });
+      const matchStage: any = {
+        deletedAt: { $ne: null },
+      };
 
-    if (existingDeviceInfo) {
-      await this.prisma.deviceInfo.update({
-        where: { userId: userId },
-        data: {
-          ipAddress: ipAddress,
-          deviceInfo: deviceInfo,
-          counter: {
-            increment: 1,
-          },
-          status: 'Active',
-        },
+      if (filters) {
+        if (filters.fullName) {
+          matchStage.fullName = { $regex: filters.fullName, $options: 'i' };
+        }
+        if (filters.email) {
+          matchStage.email = { $regex: filters.email, $options: 'i' };
+        }
+        if (filters.role) {
+          matchStage.role = filters.role;
+        }
+        if (filters.accountStatus) {
+          matchStage.accountStatus = filters.accountStatus;
+        }
+        if (filters.country) {
+          matchStage.country = { $regex: filters.country, $options: 'i' };
+        }
+      }
+
+      const totalCountResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [{ $match: matchStage }, { $count: 'total' }],
       });
-    } else {
-      await this.prisma.deviceInfo.create({
-        data: {
-          ipAddress: ipAddress,
-          deviceInfo: deviceInfo,
+
+      const totalCount = totalCountResult?.[0]?.total || 0;
+
+      let sortStage: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none') {
+        sortStage[sortDto.name] = sortDto.sort === 'asc' ? 1 : -1;
+      } else {
+        sortStage['createdAt'] = -1;
+      }
+
+      const deletedUsersResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [
+          { $match: matchStage },
+          { $sort: sortStage },
+          { $skip: skip },
+          { $limit: pageSize },
+        ],
+      });
+
+      const users = (deletedUsersResult || []).map(
+        ({ password, _id, ...u }: any) => ({
+          id: _id.$oid,
+          email: u.email,
+          fullName: u.fullName,
+          role: u.role,
+          accountStatus: u.accountStatus,
+          emailVerificationCode: u.emailVerificationCode || null,
+          emailVerified: u.emailVerified,
+          profilePicture: u.profilePicture || null,
+          phoneNumber: u.phoneNumber || null,
+          country: u.country || null,
+          totalEarnings: u.totalEarnings,
+          pendingEarnings: u.pendingEarnings,
+          withdrawnAmount: u.withdrawnAmount,
+          tasksCompleted: u.tasksCompleted,
+          tasksRejected: u.tasksRejected,
+          rejectionRate: u.rejectionRate,
+          canModerate: u.canModerate,
+          moderatorSince: u.moderatorSince?.$date || null,
+          moderatorVotes: u.moderatorVotes,
+          moderatorAccuracy: u.moderatorAccuracy,
+          suspensionEndDate: u.suspensionEndDate?.$date || null,
+          suspensionReason: u.suspensionReason || null,
+          warningsCount: u.warningsCount,
+          createdAt: u.createdAt.$date,
+          updatedAt: u.updatedAt.$date,
+          deletedAt: u.deletedAt?.$date || null,
+          lastLogin: u.lastLogin?.$date || null,
+          mediaId: u.mediaId || null,
+        }),
+      );
+
+      return {
+        totalCount,
+        users,
+        page: pageNumber,
+        limit: pageSize,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+  async restore(id: string, user: any) {
+    try {
+      console.log('[restore] called with id:', id, 'by user:', {
+        id: user?.id,
+        role: user?.role,
+        name: user?.fullName,
+      });
+
+      const existing = await this.prisma.user.findFirst({
+        where: { id: id },
+      });
+      console.log(
+        '[restore] existing user found?',
+        !!existing,
+        'id:',
+        existing?.id,
+        'deletedAt:',
+        existing?.deletedAt,
+      );
+      if (!existing) throw new BadRequestException('User not found');
+      if (existing.deletedAt == null) {
+        console.log(
+          '[restore] ⚠️ user is not deleted; proceeding to ensure blockchain/onchain but clearing deletedAt anyway',
+        );
+      }
+
+      // 1) Undo soft delete FIRST
+      console.time('[restore] prisma.user.update (clear deletedAt)');
+      let restoredUser = await this.prisma.user.update({
+        where: { id: id },
+        data: { deletedAt: null },
+      });
+      console.timeEnd('[restore] prisma.user.update (clear deletedAt)');
+
+      const { password, ...safeUser } = restoredUser;
+      const result = {
+        success: true,
+        message: 'User has been restored successfully!',
+        restoredUser: safeUser,
+      };
+
+      return result;
+    } catch (error) {
+      console.error('[restore] ❌ error thrown:', error?.message || error);
+      throw error;
+    }
+  }
+  async saveDeviceInfo(saveDeviceInfoDto: SaveDeviceInfoDto) {
+    try {
+      const { userId, ipAddress, deviceInfo } = saveDeviceInfoDto;
+
+      const existingDeviceInfo = await this.prisma.deviceInfo.findUnique({
+        where: {
           userId: userId,
         },
       });
+
+      if (existingDeviceInfo) {
+        await this.prisma.deviceInfo.update({
+          where: { userId: userId },
+          data: {
+            ipAddress: ipAddress,
+            deviceInfo: deviceInfo,
+            counter: {
+              increment: 1,
+            },
+            status: 'Active',
+          },
+        });
+      } else {
+        await this.prisma.deviceInfo.create({
+          data: {
+            ipAddress: ipAddress,
+            deviceInfo: deviceInfo,
+            userId: userId,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Failed to save device info:', error);
+      throw new Error('Failed to save device info');
     }
-  } catch (error) {
-    console.error('Failed to save device info:', error);
-    throw new Error('Failed to save device info');
   }
-}
 
   async findOneUser(id: string) {
     const user = await this.prisma.user.findUnique({

@@ -25,6 +25,7 @@ import { LogoutDto } from './dto/logout.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { FindOneUsersDto } from './dto/find-one-users.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { FindDeletedUsersDto } from './dto/find-deleted-users.dto';
 
 @ApiBearerAuth()
 @ApiTags('user')
@@ -82,6 +83,19 @@ export class UserController {
   findAllUsers(@Request() req, @Body() findAllUsersDto: FindAllUsersDto) {
     return this.userService.findAllUsers(findAllUsersDto, req);
   }
+  @UseGuards(JwtAuthGuard)
+  @Patch('find-all-deleted-users')
+  findAllDeletedUsers(
+    @Request() req: any,
+    @Body() findDeletedUsersDto: FindDeletedUsersDto,
+  ) {
+    return this.userService.findAllDeletedUsers(findDeletedUsersDto, req);
+  }
+@UseGuards(JwtAuthGuard)
+@Patch('restore/:id')
+restore(@Param('id') id: string, @Request() req: any) {
+  return this.userService.restore(id, req.user);
+}
 
   @Get(':id')
   findOneUser(@Param('id') id: string) {
