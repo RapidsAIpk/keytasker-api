@@ -189,7 +189,7 @@ export class TaskService {
   /**
    * Get all tasks with filters and sorting (Admin/Manager view all, Users view available only)
    */
-async findAll({ page, sortDto, taskType, status }: TaskFilterDto, req) {
+async findAllTasks({ page, limit, sortDto, filters }: TaskFilterDto, req) {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: req.user.id },
@@ -199,12 +199,18 @@ async findAll({ page, sortDto, taskType, status }: TaskFilterDto, req) {
         throw new NotFoundException('User not found');
       }
 
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
+
       const where: any = {
         deletedAt: null,
       };
 
-      if (taskType) where.taskType = taskType;
-      if (status) where.status = status;
+      if (filters) {
+        if (filters.taskType) where.taskType = filters.taskType;
+        if (filters.status) where.status = filters.status;
+      }
 
       if (user.role === UserRole.User) {
         where.status = TaskStatus.Active;
@@ -241,8 +247,8 @@ async findAll({ page, sortDto, taskType, status }: TaskFilterDto, req) {
 
       const tasks = await this.prisma.task.findMany({
         where,
-        skip: page ? (page - 1) * 10 : 0,
-        take: page ? 10 : undefined,
+        skip,
+        take: pageSize,
         orderBy,
         include: {
           campaign: user.role === UserRole.Admin || user.role === UserRole.Manager ? {
@@ -272,6 +278,8 @@ async findAll({ page, sortDto, taskType, status }: TaskFilterDto, req) {
       return {
         totalCount,
         tasks: sanitizedTasks,
+        page: pageNumber,
+        limit: pageSize,
       };
     } catch (error) {
       throw error;

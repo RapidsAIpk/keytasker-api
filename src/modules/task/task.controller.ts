@@ -45,7 +45,7 @@ export class TaskController {
 
 @Patch('find-all-tasks')
   findAll(@Request() req: any, @Body() filterDto: TaskFilterDto) {
-    return this.taskService.findAll(filterDto, req);
+    return this.taskService.findAllTasks(filterDto, req);
   }
 
   @Get('stats')

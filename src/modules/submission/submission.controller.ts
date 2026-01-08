@@ -88,7 +88,7 @@ export class SubmissionController {
 
   @Patch('find-all-submissions')
   getAll(@Request() req: any, @Body() findAllDto: FindAllSubmissionsDto) {
-    return this.submissionService.findAll(findAllDto, req);
+    return this.submissionService.findAllSubmissions(findAllDto, req);
   }
 
   @Get(':id')

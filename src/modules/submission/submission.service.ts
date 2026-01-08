@@ -278,7 +278,7 @@ async findMySubmissions({ page, sortDto }: FindAllSubmissionsDto, req) {
   /**
    * Get all submissions with filtering and sorting (Admin/Manager only)
    */
-async findAll({ page, sortDto }: FindAllSubmissionsDto, req) {
+async findAllSubmissions({ page, limit, sortDto, filters }: FindAllSubmissionsDto, req) {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: req.user.id },
@@ -288,9 +288,25 @@ async findAll({ page, sortDto }: FindAllSubmissionsDto, req) {
         throw new ForbiddenException('Only admins and managers can view all submissions');
       }
 
-      let totalCount = await this.prisma.taskSubmission.count({
-        where: { deletedAt: null },
-      });
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
+
+      const where: any = { deletedAt: null };
+
+      if (filters) {
+        if (filters.status) {
+          where.status = filters.status;
+        }
+        if (filters.userId) {
+          where.userId = filters.userId;
+        }
+        if (filters.taskId) {
+          where.taskId = filters.taskId;
+        }
+      }
+
+      let totalCount = await this.prisma.taskSubmission.count({ where });
 
       let orderBy: any = {};
 
@@ -299,9 +315,9 @@ async findAll({ page, sortDto }: FindAllSubmissionsDto, req) {
       else orderBy['submittedAt'] = SortEnum.Desc;
 
       const submissions = await this.prisma.taskSubmission.findMany({
-        where: { deletedAt: null },
-        skip: page ? (page - 1) * 10 : 0,
-        take: page ? 10 : undefined,
+        where,
+        skip,
+        take: pageSize,
         orderBy,
         include: {
           user: {
@@ -336,6 +352,8 @@ async findAll({ page, sortDto }: FindAllSubmissionsDto, req) {
       return {
         totalCount,
         submissions,
+        page: pageNumber,
+        limit: pageSize,
       };
     } catch (error) {
       throw error;
