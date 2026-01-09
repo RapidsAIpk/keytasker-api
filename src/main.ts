@@ -16,11 +16,19 @@ async function bootstrap() {
     .addTag('App')
     .addTag('auth')
     .addTag('user')
+    .addTag('admin')
     .addTag('media')
     .addTag('tasks')
     .addTag('submissions')
     .addTag('campaigns')
-    // .addTag('payments')
+    .addTag('moderation')
+    .addTag('payments')
+    .addTag('support')
+    .addTag('notifications')
+    .addTag('ideas')
+    .addTag('settings')
+    .addTag('analytics')
+    
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
