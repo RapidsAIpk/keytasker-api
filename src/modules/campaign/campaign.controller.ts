@@ -42,8 +42,8 @@ export class CampaignController {
   }
 
 @Patch('find-all-campaigns')
-  findAll(@Request() req: any, @Body() findAllDto: FindAllCampaignsDto) {
-    return this.campaignService.findAll(findAllDto, req);
+  findAllCampaigns(@Request() req: any, @Body() findAllCampaignsDto: FindAllCampaignsDto) {
+    return this.campaignService.findAllCampaigns(findAllCampaignsDto, req);
   }
 
   @Get('stats')

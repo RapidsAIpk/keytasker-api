@@ -121,67 +121,66 @@ export class CampaignService {
   /**
    * Get all campaigns with filtering and sorting (Admin/Manager only)
    */
-async findAll({ page, limit, sortDto, filters }: FindAllCampaignsDto, req) {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: req.user.id },
-      });
+async findAllCampaigns({ page, limit, sortDto, filters }: FindAllCampaignsDto, req) {
+  try {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
 
-      if (!user || (user.role !== UserRole.Admin && user.role !== UserRole.Manager)) {
-        throw new ForbiddenException('Only admins and managers can view campaigns');
-      }
+    if (!user || (user.role !== UserRole.Admin && user.role !== UserRole.Manager)) {
+      throw new ForbiddenException('Only admins and managers can view campaigns');
+    }
 
-      const pageNumber = Math.max(1, page);
-      const pageSize = Math.min(Math.max(limit, 1), 200);
-      const skip = (pageNumber - 1) * pageSize;
+    const pageNumber = Math.max(1, page);
+    const pageSize = Math.min(Math.max(limit, 1), 200);
+    const skip = (pageNumber - 1) * pageSize;
 
-      const where: any = { deletedAt: null };
+    const where: any = { deletedAt: null };
 
-      if (filters) {
-        if (filters.name) {
-          where.name = { contains: filters.name, mode: 'insensitive' };
-        }
-        if (filters.status) {
-          where.status = filters.status;
-        }
-        if (filters.description) {
-          where.description = { contains: filters.description, mode: 'insensitive' };
-        }
-      }
+    // Apply filters properly
+    if (filters?.name) {
+      where.name = { contains: filters.name, mode: 'insensitive' };
+    }
+    if (filters?.status) {
+      where.status = filters.status;
+    }
+    if (filters?.description) {
+      where.description = { contains: filters.description, mode: 'insensitive' };
+    }
 
-      let totalCount = await this.prisma.campaign.count({ where });
+    let totalCount = await this.prisma.campaign.count({ where });
 
-      let orderBy: any = {};
+    let orderBy: any = {};
 
-      if (sortDto?.sort && sortDto?.sort !== 'none')
-        orderBy[sortDto.name] = sortDto.sort;
-      else orderBy['createdAt'] = SortEnum.Desc;
+    if (sortDto?.sort && sortDto?.sort !== 'none')
+      orderBy[sortDto.name] = sortDto.sort;
+    else orderBy['createdAt'] = SortEnum.Desc;
 
-      const campaigns = await this.prisma.campaign.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy,
-        include: {
-          _count: {
-            select: {
-              tasks: true,
-              userInteractions: true,
-            },
+    const campaigns = await this.prisma.campaign.findMany({
+      where,
+      skip,
+      take: pageSize,
+      orderBy,
+      include: {
+        _count: {
+          select: {
+            tasks: true,
+            userInteractions: true,
           },
         },
-      });
+      },
+    });
 
-      return {
-        totalCount,
-        campaigns,
-        page: pageNumber,
-        limit: pageSize,
-      };
-    } catch (error) {
-      throw error;
-    }
+    return {
+      totalCount,
+      totalPages: Math.ceil(totalCount / pageSize),
+      currentPage: pageNumber,
+      campaigns,
+    };
+  } catch (error) {
+    throw error;
   }
+}
 
   /**
    * Get a single campaign by ID (Admin/Manager only)

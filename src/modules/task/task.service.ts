@@ -207,11 +207,6 @@ async findAllTasks({ page, limit, sortDto, filters }: TaskFilterDto, req) {
         deletedAt: null,
       };
 
-      if (filters) {
-        if (filters.taskType) where.taskType = filters.taskType;
-        if (filters.status) where.status = filters.status;
-      }
-
       if (user.role === UserRole.User) {
         where.status = TaskStatus.Active;
 
@@ -234,6 +229,17 @@ async findAllTasks({ page, limit, sortDto, filters }: TaskFilterDto, req) {
         }
         if (excludedTaskIds.length > 0) {
           where.id = { notIn: excludedTaskIds };
+        }
+
+        if (filters?.taskType) {
+          where.taskType = filters.taskType;
+        }
+      } else {
+        if (filters?.taskType) {
+          where.taskType = filters.taskType;
+        }
+        if (filters?.status) {
+          where.status = filters.status;
         }
       }
 
@@ -277,9 +283,9 @@ async findAllTasks({ page, limit, sortDto, filters }: TaskFilterDto, req) {
 
       return {
         totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
         tasks: sanitizedTasks,
-        page: pageNumber,
-        limit: pageSize,
       };
     } catch (error) {
       throw error;
