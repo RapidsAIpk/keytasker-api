@@ -230,59 +230,88 @@ const aiDetectionAnswer = createSubmissionDto.aiDetectionAnswer === 'true';
   /**
    * Submit bonus screenshot for continued conversation
    */
-  async submitBonus(bonusSubmissionDto: BonusSubmissionDto, userId: string) {
-    try {
-      // Get submission
-      const submission = await this.prisma.taskSubmission.findUnique({
-        where: { id: bonusSubmissionDto.submissionId },
-      });
+/**
+ * Submit bonus screenshot for continued conversation
+ */
+// Only showing the submitBonus method that needs to be updated
+// Replace the existing submitBonus method (lines 236-310) with this:
 
-      if (!submission) {
-        throw new NotFoundException('Submission not found');
-      }
-
-      // Verify submission belongs to user
-      if (submission.userId !== userId) {
-        throw new ForbiddenException(
-          'This submission does not belong to you',
-        );
-      }
-
-      // Check if base submission was approved
-      if (submission.status !== SubmissionStatus.Approved) {
-        throw new BadRequestException(
-          'Base submission must be approved before submitting bonus',
-        );
-      }
-
-      // Check if bonus already submitted
-      if (submission.isBonusSubmission) {
-        throw new BadRequestException(
-          'Bonus submission already exists for this task',
-        );
-      }
-
-      // Update submission with bonus
-      const updatedSubmission = await this.prisma.taskSubmission.update({
-        where: { id: bonusSubmissionDto.submissionId },
-        data: {
-          isBonusSubmission: true,
-          bonusScreenshotUrl: bonusSubmissionDto.bonusScreenshotUrl,
-          bonusSubmittedAt: new Date(),
-          status: SubmissionStatus.PendingModeration, // Goes back to moderation for bonus review
-          needsAdditionalVotes: true,
-        },
-      });
-
-      return {
-        message:
-          'Bonus submission added successfully. It will be reviewed by moderators.',
-        submission: updatedSubmission,
-      };
-    } catch (error) {
-      throw error;
+async submitBonus(
+  submissionId: string,
+  bonusScreenshot: Express.Multer.File,
+  userId: string
+) {
+  try {
+    // Validate screenshot is provided
+    if (!bonusScreenshot) {
+      throw new BadRequestException('Bonus screenshot file is required');
     }
+
+    // Upload screenshot first
+    const uploadedMedia = await this.mediaService.create(bonusScreenshot);
+    const bonusScreenshotUrl = uploadedMedia.fileUrl;
+
+    // Get submission
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id: submissionId },
+      include: { task: true },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    // Verify submission belongs to user
+    if (submission.userId !== userId) {
+      throw new ForbiddenException(
+        'This submission does not belong to you',
+      );
+    }
+
+    // Check if base submission was approved and base payment awarded
+    if (submission.status !== SubmissionStatus.Approved || !submission.basePaymentAwarded) {
+      throw new BadRequestException(
+        'Base submission must be approved before submitting bonus',
+      );
+    }
+
+    // Check if bonus already submitted
+    if (submission.bonusScreenshotUrl) {
+      throw new BadRequestException(
+        'Bonus submission already exists for this task',
+      );
+    }
+
+    // Update submission with bonus
+    const updatedSubmission = await this.prisma.taskSubmission.update({
+      where: { id: submissionId },
+      data: {
+        bonusScreenshotUrl: bonusScreenshotUrl,
+        bonusSubmittedAt: new Date(),
+        status: SubmissionStatus.PendingModeration,
+        needsAdditionalVotes: true,
+      },
+    });
+
+    // Create notification
+    await this.prisma.notification.create({
+      data: {
+        userId,
+        type: 'TaskApproved',
+        title: 'Bonus Submission Received',
+        message: `Your bonus submission is now pending moderation. It will be reviewed by moderators for an additional $${submission.task.bonusPayment.toFixed(2)}.`,
+        link: `/submissions/${submission.id}`,
+      },
+    });
+
+    return {
+      message: 'Bonus submission added successfully. It will be reviewed by moderators.',
+      submission: updatedSubmission,
+    };
+  } catch (error) {
+    throw error;
   }
+}
 
   /**
    * Get user's submissions with filtering and sorting

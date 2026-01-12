@@ -7,6 +7,7 @@ import {
   Request,
   Query,
   Param,
+  Patch,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { SuspendUserDto, ModeratorAccessDto } from './dto/suspend-user.dto';
@@ -19,6 +20,10 @@ import {
   ApiQuery,
   ApiParam,
 } from '@nestjs/swagger';
+import {
+  AdminUpdateUserDto,
+  AdminUpdateUserPasswordDto,
+} from './dto/admin-update-user.dto';
 
 @ApiBearerAuth()
 @ApiTags('admin')
@@ -38,7 +43,39 @@ export class AdminController {
   suspendUser(@Body() suspendDto: SuspendUserDto, @Request() req: any) {
     return this.adminService.suspendUser(suspendDto, req.user.id);
   }
+  @Patch('update-user/:id')
+  @ApiOperation({ summary: 'Update user details (Admin only)' })
+  @ApiResponse({ status: 200, description: 'User updated successfully' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  adminUpdateUser(
+    @Param('id') id: string,
+    @Body() dto: AdminUpdateUserDto,
+    @Request() req: any,
+  ) {
+    return this.adminService.adminUpdateUser(id, dto, req.user.id);
+  }
 
+  @Patch('update-user-password/:id')
+  @ApiOperation({ summary: 'Update user password (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Password updated successfully' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  adminUpdateUserPassword(
+    @Param('id') id: string,
+    @Body() dto: AdminUpdateUserPasswordDto,
+    @Request() req: any,
+  ) {
+    return this.adminService.adminUpdateUserPassword(id, dto, req.user.id);
+  }
   @Post('moderator-access')
   @ApiOperation({ summary: 'Grant or revoke moderator access (Admin only)' })
   @ApiResponse({
@@ -78,7 +115,9 @@ export class AdminController {
   }
 
   @Get('flagged-users')
-  @ApiOperation({ summary: 'Get flagged users and payments (Admin/Manager only)' })
+  @ApiOperation({
+    summary: 'Get flagged users and payments (Admin/Manager only)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Flagged users retrieved successfully',
@@ -108,7 +147,12 @@ export class AdminController {
     @Query('reviewNotes') reviewNotes: string,
     @Request() req: any,
   ) {
-    return this.adminService.reviewAppeal(id, approved, reviewNotes, req.user.id);
+    return this.adminService.reviewAppeal(
+      id,
+      approved,
+      reviewNotes,
+      req.user.id,
+    );
   }
 
   @Post('auto-upgrade-moderators')

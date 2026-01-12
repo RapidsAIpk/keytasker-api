@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { VoteSubmissionDto } from './dto/vote-submission.dto';
 import { FindPendingSubmissionsDto } from './dto/find-pending-submissions.dto';
-import { UserRole, SubmissionStatus, VoteDecision } from '@prisma/client';
+import { UserRole, SubmissionStatus, VoteDecision, VoteType } from '@prisma/client';
 import { SortEnum } from '@config/constants';
 
 @Injectable()
@@ -48,21 +48,57 @@ export class ModerationService {
         },
       };
 
-      // Exclude submissions the user has already voted on
+      // Determine vote type needed
       const userVotes = await this.prisma.moderationVote.findMany({
         where: { moderatorId: req.user.id },
-        select: { submissionId: true },
+        select: { submissionId: true, voteType: true },
       });
-      const votedSubmissionIds = userVotes.map((v) => v.submissionId);
 
-      if (votedSubmissionIds.length > 0) {
-        where.id = { notIn: votedSubmissionIds };
+      // Build exclusion logic: exclude submissions where user has voted for the current phase
+      const votedSubmissionIds = new Set<string>();
+      
+      for (const vote of userVotes) {
+        const submission = await this.prisma.taskSubmission.findUnique({
+          where: { id: vote.submissionId },
+          select: {
+            id: true,
+            bonusScreenshotUrl: true,
+            bonusPaymentAwarded: true,
+            basePaymentAwarded: true,
+          },
+        });
+
+        if (!submission) continue;
+
+        // If bonus exists and not awarded, we're in bonus phase
+        const isInBonusPhase = submission.bonusScreenshotUrl && !submission.bonusPaymentAwarded;
+        
+        // If user voted for the current phase, exclude this submission
+        if (isInBonusPhase && vote.voteType === 'Bonus') {
+          votedSubmissionIds.add(vote.submissionId);
+        } else if (!isInBonusPhase && vote.voteType === 'Base') {
+          votedSubmissionIds.add(vote.submissionId);
+        }
+      }
+
+      if (votedSubmissionIds.size > 0) {
+        where.id = { notIn: Array.from(votedSubmissionIds) };
       }
 
       // Apply filters
       if (filters) {
         if (filters.bonusOnly !== undefined) {
-          where.isBonusSubmission = filters.bonusOnly;
+          if (filters.bonusOnly) {
+            // Show only submissions that have bonus screenshots and are pending bonus review
+            where.bonusScreenshotUrl = { not: null };
+            where.bonusPaymentAwarded = false;
+          } else {
+            // Show only base submissions or submissions without bonus
+            where.OR = [
+              { bonusScreenshotUrl: null },
+              { bonusPaymentAwarded: true },
+            ];
+          }
         }
       }
 
@@ -166,18 +202,25 @@ export class ModerationService {
         );
       }
 
-      // Check if user has already voted
+      // Determine vote type: Base or Bonus
+      const isVotingOnBonus = submission.bonusScreenshotUrl && !submission.bonusPaymentAwarded;
+      const voteType = isVotingOnBonus ? 'Bonus' : 'Base';
+
+      // Check if user has already voted for this phase
       const existingVote = await this.prisma.moderationVote.findUnique({
         where: {
-          submissionId_moderatorId: {
+          submissionId_moderatorId_voteType: {
             submissionId: voteDto.submissionId,
             moderatorId: userId,
+            voteType: voteType,
           },
         },
       });
 
       if (existingVote) {
-        throw new BadRequestException('You have already voted on this submission');
+        throw new BadRequestException(
+          `You have already voted on this ${voteType.toLowerCase()} submission`,
+        );
       }
 
       // Check if user is voting on their own submission
@@ -200,19 +243,35 @@ export class ModerationService {
             moderatorId: userId,
             decision: voteDto.decision,
             comment: voteDto.comment,
+            voteType: voteType,
           },
         });
 
-        // Update submission vote counts
-        const updateData: any = {
-          totalVotes: { increment: 1 },
-        };
+        // Update submission vote counts based on vote type
+        const updateData: any = {};
 
-        if (voteDto.decision === VoteDecision.Approve) {
-          updateData.approveVotes = { increment: 1 };
+        if (voteType === 'Base') {
+          updateData.baseTotalVotes = { increment: 1 };
+          if (voteDto.decision === VoteDecision.Approve) {
+            updateData.baseApproveVotes = { increment: 1 };
+          } else {
+            updateData.baseRejectVotes = { increment: 1 };
+          }
+          // Update legacy fields for backward compatibility
+          updateData.totalVotes = { increment: 1 };
+          updateData.approveVotes = voteDto.decision === VoteDecision.Approve ? { increment: 1 } : undefined;
+          updateData.rejectVotes = voteDto.decision === VoteDecision.Reject ? { increment: 1 } : undefined;
         } else {
-          updateData.rejectVotes = { increment: 1 };
+          updateData.bonusTotalVotes = { increment: 1 };
+          if (voteDto.decision === VoteDecision.Approve) {
+            updateData.bonusApproveVotes = { increment: 1 };
+          } else {
+            updateData.bonusRejectVotes = { increment: 1 };
+          }
         }
+
+        // Remove undefined keys
+        Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
 
         await tx.taskSubmission.update({
           where: { id: voteDto.submissionId },
@@ -241,6 +300,7 @@ export class ModerationService {
       // Check if we need to finalize the submission
       await this.checkAndFinalizeSubmission(
         voteDto.submissionId,
+        voteType,
         minVotes,
         maxVotes,
       );
@@ -248,6 +308,7 @@ export class ModerationService {
       return {
         message: 'Vote submitted successfully',
         moderationFee,
+        voteType,
         submission: updatedSubmission,
       };
     } catch (error) {
@@ -260,6 +321,7 @@ export class ModerationService {
    */
   private async checkAndFinalizeSubmission(
     submissionId: string,
+    voteType: VoteType,
     minVotes: number,
     maxVotes: number,
   ) {
@@ -274,9 +336,18 @@ export class ModerationService {
 
     if (!submission) return;
 
-    const totalVotes = submission.totalVotes;
-    const approveVotes = submission.approveVotes;
-    const rejectVotes = submission.rejectVotes;
+    // Get vote counts for the current phase
+    let totalVotes, approveVotes, rejectVotes;
+    
+    if (voteType === 'Base') {
+      totalVotes = submission.baseTotalVotes;
+      approveVotes = submission.baseApproveVotes;
+      rejectVotes = submission.baseRejectVotes;
+    } else {
+      totalVotes = submission.bonusTotalVotes;
+      approveVotes = submission.bonusApproveVotes;
+      rejectVotes = submission.bonusRejectVotes;
+    }
 
     // Check if we have minimum votes
     if (totalVotes < minVotes) return;
@@ -287,7 +358,7 @@ export class ModerationService {
 
     // If we have a clear majority, finalize
     if (hasApprovalMajority || hasRejectionMajority) {
-      await this.finalizeSubmission(submissionId, hasApprovalMajority);
+      await this.finalizeSubmission(submissionId, voteType, hasApprovalMajority);
       return;
     }
 
@@ -305,14 +376,18 @@ export class ModerationService {
 
     // If we've reached max votes, finalize based on majority
     if (totalVotes >= maxVotes) {
-      await this.finalizeSubmission(submissionId, approveVotes > rejectVotes);
+      await this.finalizeSubmission(submissionId, voteType, approveVotes > rejectVotes);
     }
   }
 
   /**
-   * Finalize a submission (approve or reject)
+   * Finalize a submission (approve or reject) for either base or bonus
    */
-  private async finalizeSubmission(submissionId: string, isApproved: boolean) {
+  private async finalizeSubmission(
+    submissionId: string,
+    voteType: VoteType,
+    isApproved: boolean,
+  ) {
     const submission = await this.prisma.taskSubmission.findUnique({
       where: { id: submissionId },
       include: {
@@ -326,97 +401,132 @@ export class ModerationService {
 
     await this.prisma.$transaction(async (tx) => {
       let payment = 0;
-      let baseAwarded = false;
-      let bonusAwarded = false;
+      let baseAwarded = submission.basePaymentAwarded;
+      let bonusAwarded = submission.bonusPaymentAwarded;
+      let finalStatus = submission.status;
 
-      if (isApproved) {
-        // Calculate payment
-        payment = submission.task.basePayment;
-        baseAwarded = true;
+      if (voteType === 'Base') {
+        // Finalizing base submission
+        if (isApproved) {
+          payment = submission.task.basePayment;
+          baseAwarded = true;
+          finalStatus = SubmissionStatus.Approved;
 
-        // Add bonus if applicable
-        if (submission.isBonusSubmission && submission.bonusScreenshotUrl) {
-          payment += submission.task.bonusPayment;
-          bonusAwarded = true;
+          // Update user earnings
+          await tx.user.update({
+            where: { id: submission.userId },
+            data: {
+              pendingEarnings: { increment: payment },
+              totalEarnings: { increment: payment },
+              tasksCompleted: { increment: 1 },
+            },
+          });
+
+          // Update task stats
+          await tx.task.update({
+            where: { id: submission.taskId },
+            data: {
+              approvedCount: { increment: 1 },
+            },
+          });
+
+          // Create approval notification
+          await tx.notification.create({
+            data: {
+              userId: submission.userId,
+              type: 'TaskApproved',
+              title: 'Base Submission Approved!',
+              message: `Your base submission was approved! You earned $${payment.toFixed(2)}. You can now submit a bonus screenshot for an additional $${submission.task.bonusPayment.toFixed(2)}.`,
+              link: `/submissions/${submission.id}`,
+            },
+          });
+        } else {
+          // Base submission rejected
+          finalStatus = SubmissionStatus.Rejected;
+
+          await tx.user.update({
+            where: { id: submission.userId },
+            data: {
+              tasksRejected: { increment: 1 },
+            },
+          });
+
+          await tx.task.update({
+            where: { id: submission.taskId },
+            data: {
+              rejectedCount: { increment: 1 },
+            },
+          });
+
+          await tx.notification.create({
+            data: {
+              userId: submission.userId,
+              type: 'TaskRejected',
+              title: 'Base Submission Rejected',
+              message: 'Your base submission was rejected by moderators. You can appeal this decision.',
+              link: `/submissions/${submission.id}`,
+            },
+          });
+
+          await this.checkAndSuspendUser(submission.userId, tx);
         }
-
-        // Update user earnings
-        await tx.user.update({
-          where: { id: submission.userId },
-          data: {
-            pendingEarnings: { increment: payment },
-            totalEarnings: { increment: payment },
-            tasksCompleted: { increment: 1 },
-          },
-        });
-
-        // Update task stats
-        await tx.task.update({
-          where: { id: submission.taskId },
-          data: {
-            approvedCount: { increment: 1 },
-          },
-        });
-
-        // Create approval notification
-        await tx.notification.create({
-          data: {
-            userId: submission.userId,
-            type: 'TaskApproved',
-            title: 'Submission Approved!',
-            message: `Your submission was approved! You earned $${payment.toFixed(2)}`,
-            link: `/submissions/${submission.id}`,
-          },
-        });
       } else {
-        // Rejected
-        await tx.user.update({
-          where: { id: submission.userId },
-          data: {
-            tasksRejected: { increment: 1 },
-          },
-        });
+        // Finalizing bonus submission
+        if (isApproved) {
+          payment = submission.task.bonusPayment;
+          bonusAwarded = true;
+          // Keep status as Approved since base was already approved
 
-        // Update task stats
-        await tx.task.update({
-          where: { id: submission.taskId },
-          data: {
-            rejectedCount: { increment: 1 },
-          },
-        });
+          // Update user earnings
+          await tx.user.update({
+            where: { id: submission.userId },
+            data: {
+              pendingEarnings: { increment: payment },
+              totalEarnings: { increment: payment },
+            },
+          });
 
-        // Create rejection notification
-        await tx.notification.create({
-          data: {
-            userId: submission.userId,
-            type: 'TaskRejected',
-            title: 'Submission Rejected',
-            message:
-              'Your submission was rejected by moderators. You can appeal this decision.',
-            link: `/submissions/${submission.id}`,
-          },
-        });
-
-        // Check if user needs suspension
-        await this.checkAndSuspendUser(submission.userId, tx);
+          // Create approval notification
+          await tx.notification.create({
+            data: {
+              userId: submission.userId,
+              type: 'TaskApproved',
+              title: 'Bonus Submission Approved!',
+              message: `Your bonus submission was approved! You earned an additional $${payment.toFixed(2)}.`,
+              link: `/submissions/${submission.id}`,
+            },
+          });
+        } else {
+          // Bonus submission rejected - base payment still awarded
+          await tx.notification.create({
+            data: {
+              userId: submission.userId,
+              type: 'TaskRejected',
+              title: 'Bonus Submission Rejected',
+              message: 'Your bonus submission was rejected. Your base payment remains awarded.',
+              link: `/submissions/${submission.id}`,
+            },
+          });
+        }
       }
+
+      // Calculate total payment
+      let totalPayment = 0;
+      if (baseAwarded) totalPayment += submission.task.basePayment;
+      if (bonusAwarded) totalPayment += submission.task.bonusPayment;
 
       // Update submission status
       await tx.taskSubmission.update({
         where: { id: submissionId },
         data: {
-          status: isApproved
-            ? SubmissionStatus.Approved
-            : SubmissionStatus.Rejected,
+          status: finalStatus,
           basePaymentAwarded: baseAwarded,
           bonusPaymentAwarded: bonusAwarded,
-          totalPayment: payment,
+          totalPayment: totalPayment,
           finalizedAt: new Date(),
+          needsAdditionalVotes: false,
         },
       });
-
-      // Update moderator accuracy for all voters
-      await this.updateModeratorAccuracy(submissionId, isApproved, tx);
 
       // Calculate and update task approval rate
       const taskStats = await tx.taskSubmission.groupBy({
@@ -440,6 +550,13 @@ export class ModerationService {
         });
       }
     });
+
+    // Update moderator accuracy OUTSIDE the transaction
+    try {
+      await this.updateModeratorAccuracy(submissionId, voteType, isApproved);
+    } catch (error) {
+      console.error('Error updating moderator accuracy:', error);
+    }
   }
 
   /**
@@ -447,14 +564,17 @@ export class ModerationService {
    */
   private async updateModeratorAccuracy(
     submissionId: string,
+    voteType: VoteType,
     finalDecisionIsApproved: boolean,
-    tx: any,
   ) {
-    const votes = await tx.moderationVote.findMany({
-      where: { submissionId },
+    const votes = await this.prisma.moderationVote.findMany({
+      where: { 
+        submissionId,
+        voteType: voteType,
+      },
     });
 
-    const settings = await tx.platformSettings.findFirst();
+    const settings = await this.prisma.platformSettings.findFirst();
     const accuracyThreshold = settings?.moderatorAccuracyMin || 0.75;
 
     for (const vote of votes) {
@@ -463,13 +583,13 @@ export class ModerationService {
         (!finalDecisionIsApproved && vote.decision === VoteDecision.Reject);
 
       // Update vote record
-      await tx.moderationVote.update({
+      await this.prisma.moderationVote.update({
         where: { id: vote.id },
         data: { wasCorrect: voteWasCorrect },
       });
 
       // Get moderator's voting history
-      const moderatorVotes = await tx.moderationVote.findMany({
+      const moderatorVotes = await this.prisma.moderationVote.findMany({
         where: {
           moderatorId: vote.moderatorId,
           wasCorrect: { not: null },
@@ -481,14 +601,14 @@ export class ModerationService {
       const accuracy = totalVotes > 0 ? correctVotes / totalVotes : 0;
 
       // Update moderator accuracy
-      await tx.user.update({
+      await this.prisma.user.update({
         where: { id: vote.moderatorId },
         data: { moderatorAccuracy: accuracy },
       });
 
       // Check if moderator should be suspended from moderation
       if (totalVotes >= 10 && accuracy < accuracyThreshold) {
-        await tx.user.update({
+        await this.prisma.user.update({
           where: { id: vote.moderatorId },
           data: {
             canModerate: false,
@@ -497,7 +617,7 @@ export class ModerationService {
         });
 
         // Create suspension notification
-        await tx.notification.create({
+        await this.prisma.notification.create({
           data: {
             userId: vote.moderatorId,
             type: 'SuspensionWarning',
@@ -523,6 +643,14 @@ export class ModerationService {
     if (totalTasks === 0) return;
 
     const rejectionRate = user.tasksRejected / totalTasks;
+
+    // UPDATE THE USER'S REJECTION RATE FIELD
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        rejectionRate: rejectionRate,
+      },
+    });
 
     const settings = await tx.platformSettings.findFirst();
     const threshold = settings?.suspensionThreshold || 0.25;
@@ -660,9 +788,12 @@ export class ModerationService {
               select: {
                 id: true,
                 status: true,
-                totalVotes: true,
-                approveVotes: true,
-                rejectVotes: true,
+                baseTotalVotes: true,
+                baseApproveVotes: true,
+                baseRejectVotes: true,
+                bonusTotalVotes: true,
+                bonusApproveVotes: true,
+                bonusRejectVotes: true,
                 task: {
                   select: {
                     id: true,

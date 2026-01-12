@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { SuspendUserDto, ModeratorAccessDto } from './dto/suspend-user.dto';
 import { UserRole, AccountStatus } from '@prisma/client';
+import { AdminUpdateUserDto, AdminUpdateUserPasswordDto } from './dto/admin-update-user.dto';
 
 @Injectable()
 export class AdminService {
@@ -121,7 +122,95 @@ export class AdminService {
       throw error;
     }
   }
+/**
+   * Update user details (Admin only)
+   */
+  async adminUpdateUser(userId: string, dto: AdminUpdateUserDto, adminId: string) {
+    try {
+      const admin = await this.prisma.user.findUnique({
+        where: { id: adminId },
+      });
 
+      if (!admin || admin.role !== UserRole.Admin) {
+        throw new ForbiddenException('Only admins can update users');
+      }
+
+      const existing = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!existing) {
+        throw new NotFoundException('User not found');
+      }
+
+      const data: any = {};
+      if (dto.fullName !== undefined) data.fullName = dto.fullName;
+      if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber;
+      if (dto.country !== undefined) data.country = dto.country;
+      if (dto.role !== undefined) data.role = dto.role;
+      if (dto.accountStatus !== undefined) data.accountStatus = dto.accountStatus;
+
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data,
+      });
+
+      const { password, ...userWithoutPassword } = updated;
+      return {
+        message: 'User updated successfully',
+        user: userWithoutPassword,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Update user password (Admin only)
+   */
+  async adminUpdateUserPassword(
+    userId: string,
+    dto: AdminUpdateUserPasswordDto,
+    adminId: string,
+  ) {
+    try {
+      const admin = await this.prisma.user.findUnique({
+        where: { id: adminId },
+      });
+
+      if (!admin || admin.role !== UserRole.Admin) {
+        throw new ForbiddenException('Only admins can update user passwords');
+      }
+
+      if (dto.password !== dto.confirmPassword) {
+        throw new BadRequestException('Passwords do not match');
+      }
+
+      const user = await this.prisma.user.findFirst({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const bcrypt = require('bcrypt');
+      const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { password: hashedPassword },
+      });
+
+      const { password, ...userWithoutPassword } = updated;
+      return {
+        message: `Password updated for ${user.email}`,
+        user: userWithoutPassword,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
   /**
    * Grant or revoke moderator access (Admin only)
    */

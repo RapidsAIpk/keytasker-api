@@ -63,29 +63,33 @@ create(
   
   return this.submissionService.create(createDto, screenshot, req.user.id);
 }
-  @Post(':id/bonus')
-  @ApiOperation({ summary: 'Submit bonus screenshot for continued conversation' })
-  @ApiResponse({
-    status: 201,
-    description: 'Bonus submission added successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Base submission not approved or bonus already submitted',
-  })
-  @ApiResponse({ status: 403, description: 'Forbidden - Not your submission' })
-  @ApiResponse({ status: 404, description: 'Submission not found' })
-  @ApiParam({ name: 'id', description: 'Submission ID' })
-  submitBonus(
-    @Param('id') id: string,
-    @Body() bonusDto: BonusSubmissionDto,
-    @Request() req: any,
-  ) {
-    return this.submissionService.submitBonus(
-      { ...bonusDto, submissionId: id },
-      req.user.id,
-    );
-  }
+@Post(':id/bonus')
+@ApiOperation({ summary: 'Submit bonus screenshot for continued conversation' })
+@ApiConsumes('multipart/form-data')
+@UseInterceptors(FileInterceptor('bonusScreenshot'))
+@ApiResponse({
+  status: 201,
+  description: 'Bonus submission added successfully',
+})
+@ApiResponse({
+  status: 400,
+  description: 'Bad request - Base submission not approved or bonus already submitted',
+})
+@ApiResponse({ status: 403, description: 'Forbidden - Not your submission' })
+@ApiResponse({ status: 404, description: 'Submission not found' })
+@ApiParam({ name: 'id', description: 'Submission ID' })
+submitBonus(
+  @Param('id') id: string,
+  @Body() bonusDto: BonusSubmissionDto,  // ADD THIS!
+  @UploadedFile() bonusScreenshot: Express.Multer.File,
+  @Request() req: any,
+) {
+  return this.submissionService.submitBonus(
+    id,
+    bonusScreenshot,
+    req.user.id,
+  );
+}
 
   @Patch('find-my-submissions')
   getMySubmissions(@Request() req: any, @Body() findAllDto: FindAllSubmissionsDto) {
