@@ -11,171 +11,222 @@ import { SubmissionAppealDto } from './dto/submission-appeal.dto';
 import { FindAllSubmissionsDto } from './dto/find-all-submissions.dto';
 import { SubmissionStatus, UserRole, Prisma } from '@prisma/client';
 import { SortEnum } from '@config/constants';
-
+import { MediaService } from '../media/media.service';
 @Injectable()
 export class SubmissionService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService,private readonly mediaService: MediaService, // Add this
+    ) {}
 
   /**
    * Create a new task submission
    */
-  async create(createSubmissionDto: CreateSubmissionDto, userId: string) {
-    try {
-      // Get user
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-      });
+async create(
+  createSubmissionDto: CreateSubmissionDto, 
+  screenshot: Express.Multer.File,
+  userId: string
+) {
+  // console.log('=== SUBMISSION SERVICE START ===');
+  // console.log('DTO in service:', createSubmissionDto);
+  // console.log('Screenshot in service:', screenshot ? 'FILE EXISTS' : 'NO FILE');
+  // console.log('User ID in service:', userId);
+  
+  try {
+    // Validate screenshot is provided
+    if (!screenshot) {
+      console.log('ERROR: Screenshot is missing');
+      throw new BadRequestException('Screenshot file is required');
+    }
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+    // console.log('Uploading screenshot to media service...');
+    // Upload screenshot first
+    const uploadedMedia = await this.mediaService.create(screenshot);
+    // console.log('Screenshot uploaded:', uploadedMedia);
+    const screenshotUrl = uploadedMedia.fileUrl;
 
-      // Check if user is suspended
-      if (
-        user.accountStatus === 'Suspended' ||
-        user.accountStatus === 'Banned'
-      ) {
-        throw new ForbiddenException('Your account is suspended or banned');
-      }
+  // Convert aiDetectionAnswer string to boolean
+const aiDetectionAnswer = createSubmissionDto.aiDetectionAnswer === 'true';
+// console.log('AI Detection Answer converted:', aiDetectionAnswer, typeof aiDetectionAnswer);
+//     console.log('Getting user...');
+    // Get user
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
 
-      // Get task
-      const task = await this.prisma.task.findUnique({
-        where: { id: createSubmissionDto.taskId },
-        include: { campaign: true },
-      });
+    if (!user) {
+      console.log('ERROR: User not found');
+      throw new NotFoundException('User not found');
+    }
+    // console.log('User found:', user.id);
 
-      if (!task) {
-        throw new NotFoundException('Task not found');
-      }
+    // Check if user is suspended
+    if (
+      user.accountStatus === 'Suspended' ||
+      user.accountStatus === 'Banned'
+    ) {
+      // console.log('ERROR: User is suspended/banned');
+      throw new ForbiddenException('Your account is suspended or banned');
+    }
 
-      // Check if task is active
-      if (task.status !== 'Active') {
-        throw new BadRequestException('This task is not currently active');
-      }
+    // console.log('Getting task...');
+    // Get task
+    const task = await this.prisma.task.findUnique({
+      where: { id: createSubmissionDto.taskId },
+      include: { campaign: true },
+    });
 
-      // Check if task has capacity
-      if (task.completedCount >= task.totalQuantity) {
-        throw new BadRequestException(
-          'This task has reached its completion limit',
-        );
-      }
+    if (!task) {
+      // console.log('ERROR: Task not found');
+      throw new NotFoundException('Task not found');
+    }
+    // console.log('Task found:', task.id);
 
-      // Check if user has already submitted this task
-      const existingSubmission = await this.prisma.taskSubmission.findFirst({
+    // Check if task is active
+    if (task.status !== 'Active') {
+      // console.log('ERROR: Task is not active, status:', task.status);
+      throw new BadRequestException('This task is not currently active');
+    }
+
+    // Check if task has capacity
+    if (task.completedCount >= task.totalQuantity) {
+      // console.log('ERROR: Task capacity reached');
+      throw new BadRequestException(
+        'This task has reached its completion limit',
+      );
+    }
+
+    // console.log('Checking existing submission...');
+    // Check if user has already submitted this task
+    const existingSubmission = await this.prisma.taskSubmission.findFirst({
+      where: {
+        userId,
+        taskId: createSubmissionDto.taskId,
+      },
+    });
+
+    if (existingSubmission) {
+      // console.log('ERROR: User already submitted this task');
+      throw new BadRequestException('You have already submitted this task');
+    }
+
+    // console.log('Checking campaign interaction...');
+    // Check if user has interacted with this campaign before
+    const campaignInteraction =
+      await this.prisma.userCampaignInteraction.findUnique({
         where: {
-          userId,
-          taskId: createSubmissionDto.taskId,
-        },
-      });
-
-      if (existingSubmission) {
-        throw new BadRequestException('You have already submitted this task');
-      }
-
-      // Check if user has interacted with this campaign before
-      const campaignInteraction =
-        await this.prisma.userCampaignInteraction.findUnique({
-          where: {
-            userId_campaignId: {
-              userId,
-              campaignId: task.campaignId,
-            },
-          },
-        });
-
-      if (campaignInteraction) {
-        throw new ForbiddenException(
-          'You cannot submit tasks from a campaign you have already interacted with',
-        );
-      }
-
-      // Check if user has an active reservation for this task
-      const reservation = await this.prisma.taskReservation.findFirst({
-        where: {
-          userId,
-          taskId: createSubmissionDto.taskId,
-          status: { in: ['Reserved', 'InProgress'] },
-        },
-      });
-
-      // Create submission and campaign interaction in a transaction
-      const submission = await this.prisma.$transaction(async (tx) => {
-        // Create the submission
-        const newSubmission = await tx.taskSubmission.create({
-          data: {
-            taskId: createSubmissionDto.taskId,
-            userId,
-            screenshotUrl: createSubmissionDto.screenshotUrl,
-            aiDetectionAnswer: createSubmissionDto.aiDetectionAnswer,
-            reasonText: createSubmissionDto.reasonText,
-            status: SubmissionStatus.PendingModeration,
-            totalPayment: 0, // Will be set after moderation
-          },
-          include: {
-            task: {
-              select: {
-                id: true,
-                taskType: true,
-                topicInstruction: true,
-                basePayment: true,
-                bonusPayment: true,
-              },
-            },
-          },
-        });
-
-        // Create campaign interaction record
-        await tx.userCampaignInteraction.create({
-          data: {
+          userId_campaignId: {
             userId,
             campaignId: task.campaignId,
           },
-        });
-
-        // Increment task completed count
-        await tx.task.update({
-          where: { id: createSubmissionDto.taskId },
-          data: {
-            completedCount: {
-              increment: 1,
-            },
-          },
-        });
-
-        // Update reservation if exists
-        if (reservation) {
-          await tx.taskReservation.update({
-            where: { id: reservation.id },
-            data: {
-              status: 'Completed',
-              completedAt: new Date(),
-            },
-          });
-        }
-
-        return newSubmission;
-      });
-
-      // Create notification
-      await this.prisma.notification.create({
-        data: {
-          userId,
-          type: 'TaskApproved', // Will be updated after moderation
-          title: 'Submission Received',
-          message: 'Your task submission is now pending moderation.',
-          link: `/submissions/${submission.id}`,
         },
       });
 
-      return {
-        message: 'Task submission created successfully',
-        submission,
-      };
-    } catch (error) {
-      throw error;
+    if (campaignInteraction) {
+      // console.log('ERROR: User already interacted with campaign');
+      throw new ForbiddenException(
+        'You cannot submit tasks from a campaign you have already interacted with',
+      );
     }
-  }
 
+    // console.log('Checking reservation...');
+    // Check if user has an active reservation for this task
+    const reservation = await this.prisma.taskReservation.findFirst({
+      where: {
+        userId,
+        taskId: createSubmissionDto.taskId,
+        status: { in: ['Reserved', 'InProgress'] },
+      },
+    });
+    // console.log('Reservation found:', reservation ? 'YES' : 'NO');
+
+    // console.log('Starting transaction...');
+    // Create submission and campaign interaction in a transaction
+    const submission = await this.prisma.$transaction(async (tx) => {
+      // console.log('Creating submission...');
+      // Create the submission
+      const newSubmission = await tx.taskSubmission.create({
+        data: {
+          taskId: createSubmissionDto.taskId,
+          userId,
+          screenshotUrl: screenshotUrl,
+          aiDetectionAnswer: aiDetectionAnswer, // Use converted boolean
+          reasonText: createSubmissionDto.reasonText,
+          status: 'PendingModeration',
+          totalPayment: 0,
+        },
+        include: {
+          task: {
+            select: {
+              id: true,
+              taskType: true,
+              topicInstruction: true,
+              basePayment: true,
+              bonusPayment: true,
+            },
+          },
+        },
+      });
+      console.log('Submission created:', newSubmission.id);
+
+      console.log('Creating campaign interaction...');
+      // Create campaign interaction record
+      await tx.userCampaignInteraction.create({
+        data: {
+          userId,
+          campaignId: task.campaignId,
+        },
+      });
+
+      // console.log('Updating task completed count...');
+      // Increment task completed count
+      await tx.task.update({
+        where: { id: createSubmissionDto.taskId },
+        data: {
+          completedCount: {
+            increment: 1,
+          },
+        },
+      });
+
+      // Update reservation if exists
+      if (reservation) {
+        // console.log('Updating reservation...');
+        await tx.taskReservation.update({
+          where: { id: reservation.id },
+          data: {
+            status: 'Completed',
+            completedAt: new Date(),
+          },
+        });
+      }
+
+      return newSubmission;
+    });
+    // console.log('Transaction completed');
+
+    // console.log('Creating notification...');
+    // Create notification
+    await this.prisma.notification.create({
+      data: {
+        userId,
+        type: 'TaskApproved',
+        title: 'Submission Received',
+        message: 'Your task submission is now pending moderation.',
+        link: `/submissions/${submission.id}`,
+      },
+    });
+    console.log('Notification created');
+
+    console.log('=== SUBMISSION SERVICE SUCCESS ===');
+    return {
+      message: 'Task submission created successfully',
+      submission,
+    };
+  } catch (error) {
+    console.log('=== SUBMISSION SERVICE ERROR ===');
+    console.error('Error details:', error);
+    throw error;
+  }
+}
   /**
    * Submit bonus screenshot for continued conversation
    */

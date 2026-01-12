@@ -40,7 +40,7 @@ export class UserSeed {
         await this.userService.registerManager({
           fullName: 'Site Manager',
           email: 'manager@keytasker.com',
-          password: 'Manager123!',
+          password: 'Manager123',
         });
       }
 
@@ -53,7 +53,7 @@ export class UserSeed {
         await this.userService.register({
           fullName: 'Test User',
           email: 'user@keytasker.com',
-          password: 'User123!',
+          password: 'User123',
         });
       }
     } catch (error) {

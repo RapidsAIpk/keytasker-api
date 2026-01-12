@@ -8,6 +8,7 @@ import {
   Query,
   Param,
   Patch,
+  UseInterceptors,
 } from '@nestjs/common';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { BonusSubmissionDto } from './dto/bonus-submission.dto';
@@ -20,8 +21,11 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { SubmissionService } from './submission.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { UploadedFile } from '@nestjs/common';
 
 @ApiBearerAuth()
 @ApiTags('submissions')
@@ -30,19 +34,35 @@ import { SubmissionService } from './submission.service';
 export class SubmissionController {
   constructor(private readonly submissionService: SubmissionService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a new task submission' })
-  @ApiResponse({ status: 201, description: 'Submission created successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Task already submitted or campaign already interacted with',
-  })
-  @ApiResponse({ status: 403, description: 'Forbidden - Account suspended' })
-  @ApiResponse({ status: 404, description: 'Task not found' })
-  create(@Body() createDto: CreateSubmissionDto, @Request() req: any) {
-    return this.submissionService.create(createDto, req.user.id);
-  }
-
+@Post()
+@ApiOperation({ summary: 'Create a new task submission' })
+@ApiConsumes('multipart/form-data')
+@UseInterceptors(FileInterceptor('screenshot'))
+@ApiResponse({ status: 201, description: 'Submission created successfully' })
+@ApiResponse({
+  status: 400,
+  description: 'Bad request - Task already submitted or campaign already interacted with',
+})
+@ApiResponse({ status: 403, description: 'Forbidden - Account suspended' })
+@ApiResponse({ status: 404, description: 'Task not found' })
+create(
+  @Body() createDto: CreateSubmissionDto, 
+  @UploadedFile() screenshot: Express.Multer.File,
+  @Request() req: any
+) {
+  // console.log('=== SUBMISSION CONTROLLER START ===');
+  // console.log('DTO received:', createDto);
+  // console.log('Screenshot file:', screenshot ? {
+  //   fieldname: screenshot.fieldname,
+  //   originalname: screenshot.originalname,
+  //   mimetype: screenshot.mimetype,
+  //   size: screenshot.size
+  // } : 'NO FILE');
+  // console.log('User ID:', req.user?.id);
+  // console.log('=== SUBMISSION CONTROLLER END ===');
+  
+  return this.submissionService.create(createDto, screenshot, req.user.id);
+}
   @Post(':id/bonus')
   @ApiOperation({ summary: 'Submit bonus screenshot for continued conversation' })
   @ApiResponse({

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsBoolean, MinLength, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
 
 export class CreateSubmissionDto {
   @ApiProperty({
@@ -10,18 +10,21 @@ export class CreateSubmissionDto {
   taskId: string;
 
   @ApiProperty({
-    example: 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
+    type: 'string',
+    format: 'binary',
+    description: 'Screenshot file (required)',
+  })
+  @IsOptional()
+  screenshot?: any;
+
+  @ApiProperty({
+    example: 'false',
+    type: String,
+    description: 'true or false',
   })
   @IsString()
   @IsNotEmpty()
-  screenshotUrl: string;
-
-  @ApiProperty({
-    example: true,
-  })
-  @IsBoolean()
-  @IsNotEmpty()
-  aiDetectionAnswer: boolean;
+  aiDetectionAnswer: string; // Changed to string
 
   @ApiProperty({
     example: 'The response feels overly formal and structured, typical of AI responses.',
