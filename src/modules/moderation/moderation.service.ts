@@ -17,147 +17,153 @@ export class ModerationService {
   /**
    * Get pending submissions for moderation (Moderators only)
    */
-  async findPendingSubmissions(
-    { page, limit, sortDto, filters }: FindPendingSubmissionsDto,
-    req: any,
-  ) {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: req.user.id },
-      });
+async findPendingSubmissions(
+  { page, limit, sortDto, filters }: FindPendingSubmissionsDto,
+  req: any,
+) {
+  try {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
-      // Check if user can moderate
-      if (!user.canModerate) {
-        throw new ForbiddenException(
-          'You must earn at least $25 to moderate submissions',
-        );
-      }
+    // Check if user can moderate
+    if (!user.canModerate) {
+      throw new ForbiddenException(
+        'You must earn at least $25 to moderate submissions',
+      );
+    }
 
-      const pageNumber = Math.max(1, page);
-      const pageSize = Math.min(Math.max(limit, 1), 200);
-      const skip = (pageNumber - 1) * pageSize;
+    const pageNumber = Math.max(1, page);
+    const pageSize = Math.min(Math.max(limit, 1), 200);
+    const skip = (pageNumber - 1) * pageSize;
 
-      const where: any = {
-        deletedAt: null,
-        status: {
-          in: [SubmissionStatus.PendingModeration, SubmissionStatus.UnderReview],
-        },
+    const where: any = {
+      deletedAt: null,
+    };
+
+    // Apply status filter if provided, otherwise default to pending statuses
+    if (filters?.status) {
+      where.status = filters.status;
+    } else {
+      where.status = {
+        in: [SubmissionStatus.PendingModeration, SubmissionStatus.UnderReview],
       };
+    }
 
-      // Determine vote type needed
-      const userVotes = await this.prisma.moderationVote.findMany({
-        where: { moderatorId: req.user.id },
-        select: { submissionId: true, voteType: true },
+    // Determine vote type needed
+    const userVotes = await this.prisma.moderationVote.findMany({
+      where: { moderatorId: req.user.id },
+      select: { submissionId: true, voteType: true },
+    });
+
+    // Build exclusion logic: exclude submissions where user has voted for the current phase
+    const votedSubmissionIds = new Set<string>();
+    
+    for (const vote of userVotes) {
+      const submission = await this.prisma.taskSubmission.findUnique({
+        where: { id: vote.submissionId },
+        select: {
+          id: true,
+          bonusScreenshotUrl: true,
+          bonusPaymentAwarded: true,
+          basePaymentAwarded: true,
+        },
       });
 
-      // Build exclusion logic: exclude submissions where user has voted for the current phase
-      const votedSubmissionIds = new Set<string>();
+      if (!submission) continue;
+
+      // If bonus exists and not awarded, we're in bonus phase
+      const isInBonusPhase = submission.bonusScreenshotUrl && !submission.bonusPaymentAwarded;
       
-      for (const vote of userVotes) {
-        const submission = await this.prisma.taskSubmission.findUnique({
-          where: { id: vote.submissionId },
-          select: {
-            id: true,
-            bonusScreenshotUrl: true,
-            bonusPaymentAwarded: true,
-            basePaymentAwarded: true,
-          },
-        });
+      // If user voted for the current phase, exclude this submission
+      if (isInBonusPhase && vote.voteType === 'Bonus') {
+        votedSubmissionIds.add(vote.submissionId);
+      } else if (!isInBonusPhase && vote.voteType === 'Base') {
+        votedSubmissionIds.add(vote.submissionId);
+      }
+    }
 
-        if (!submission) continue;
+    if (votedSubmissionIds.size > 0) {
+      where.id = { notIn: Array.from(votedSubmissionIds) };
+    }
 
-        // If bonus exists and not awarded, we're in bonus phase
-        const isInBonusPhase = submission.bonusScreenshotUrl && !submission.bonusPaymentAwarded;
-        
-        // If user voted for the current phase, exclude this submission
-        if (isInBonusPhase && vote.voteType === 'Bonus') {
-          votedSubmissionIds.add(vote.submissionId);
-        } else if (!isInBonusPhase && vote.voteType === 'Base') {
-          votedSubmissionIds.add(vote.submissionId);
+    // Apply filters
+    if (filters) {
+      if (filters.bonusOnly !== undefined) {
+        if (filters.bonusOnly) {
+          // Show only submissions that have bonus screenshots and are pending bonus review
+          where.bonusScreenshotUrl = { not: null };
+          where.bonusPaymentAwarded = false;
+        } else {
+          // Show only base submissions or submissions without bonus
+          where.OR = [
+            { bonusScreenshotUrl: null },
+            { bonusPaymentAwarded: true },
+          ];
         }
       }
 
-      if (votedSubmissionIds.size > 0) {
-        where.id = { notIn: Array.from(votedSubmissionIds) };
-      }
-
-      // Apply filters
-      if (filters) {
-        if (filters.bonusOnly !== undefined) {
-          if (filters.bonusOnly) {
-            // Show only submissions that have bonus screenshots and are pending bonus review
-            where.bonusScreenshotUrl = { not: null };
-            where.bonusPaymentAwarded = false;
-          } else {
-            // Show only base submissions or submissions without bonus
-            where.OR = [
-              { bonusScreenshotUrl: null },
-              { bonusPaymentAwarded: true },
-            ];
-          }
-        }
-      }
-
-      // Add task filters if needed
-      if (filters?.taskType) {
+      // Add task type filter
+      if (filters.taskType) {
         where.task = {
           taskType: filters.taskType,
         };
       }
+    }
 
-      let totalCount = await this.prisma.taskSubmission.count({ where });
+    let totalCount = await this.prisma.taskSubmission.count({ where });
 
-      let orderBy: any = {};
-      if (sortDto?.sort && sortDto?.sort !== 'none')
-        orderBy[sortDto.name] = sortDto.sort;
-      else orderBy['submittedAt'] = SortEnum.Asc; // Oldest first
+    let orderBy: any = {};
+    if (sortDto?.sort && sortDto?.sort !== 'none')
+      orderBy[sortDto.name] = sortDto.sort;
+    else orderBy['submittedAt'] = SortEnum.Asc; // Oldest first
 
-      const submissions = await this.prisma.taskSubmission.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy,
-        include: {
-          task: {
-            select: {
-              id: true,
-              taskType: true,
-              recipient: true,
-              topicInstruction: true,
-              detailedInstructions: true,
-              basePayment: true,
-              bonusPayment: true,
-            },
-          },
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              rejectionRate: true,
-            },
-          },
-          _count: {
-            select: {
-              moderationVotes: true,
-            },
+    const submissions = await this.prisma.taskSubmission.findMany({
+      where,
+      skip,
+      take: pageSize,
+      orderBy,
+      include: {
+        task: {
+          select: {
+            id: true,
+            taskType: true,
+            recipient: true,
+            topicInstruction: true,
+            detailedInstructions: true,
+            basePayment: true,
+            bonusPayment: true,
           },
         },
-      });
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            rejectionRate: true,
+          },
+        },
+        _count: {
+          select: {
+            moderationVotes: true,
+          },
+        },
+      },
+    });
 
-      return {
-        totalCount,
-        submissions,
-        page: pageNumber,
-        limit: pageSize,
-      };
-    } catch (error) {
-      throw error;
-    }
+    return {
+      totalCount,
+      submissions,
+      page: pageNumber,
+      limit: pageSize,
+    };
+  } catch (error) {
+    throw error;
   }
+}
 
   /**
    * Vote on a submission (Moderators only)
