@@ -355,6 +355,102 @@ async findMySubmissions({ page, sortDto }: FindAllSubmissionsDto, req) {
     }
   }
 
+  async getSubmissionWithVotes(submissionId: string, userId: string) {
+  try {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Get submission
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id: submissionId },
+      include: {
+        task: {
+          select: {
+            id: true,
+            taskType: true,
+            topicInstruction: true,
+            basePayment: true,
+            bonusPayment: true,
+          },
+        },
+        moderationVotes: {
+          include: {
+            moderator: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+          orderBy: {
+            votedAt: 'desc',
+          },
+        },
+      },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    // Check permissions - users can only view their own submissions
+    // Admins and managers can view all submissions
+    if (
+      user.role !== UserRole.Admin &&
+      user.role !== UserRole.Manager &&
+      submission.userId !== userId
+    ) {
+      throw new ForbiddenException(
+        'You can only view your own submissions',
+      );
+    }
+
+    // Separate votes by type
+    const baseVotes = submission.moderationVotes.filter(
+      (vote) => vote.voteType === 'Base',
+    );
+    const bonusVotes = submission.moderationVotes.filter(
+      (vote) => vote.voteType === 'Bonus',
+    );
+
+    // Format the response
+    const { moderationVotes, ...submissionData } = submission;
+
+    return {
+      submission: submissionData,
+      baseVotes: baseVotes.map((vote) => ({
+        id: vote.id,
+        decision: vote.decision,
+        comment: vote.comment,
+        votedAt: vote.votedAt,
+        moderator: {
+          id: vote.moderator.id,
+          fullName: vote.moderator.fullName,
+          email: vote.moderator.email,
+        },
+      })),
+      bonusVotes: bonusVotes.map((vote) => ({
+        id: vote.id,
+        decision: vote.decision,
+        comment: vote.comment,
+        votedAt: vote.votedAt,
+        moderator: {
+          id: vote.moderator.id,
+          fullName: vote.moderator.fullName,
+          email: vote.moderator.email,
+        },
+      })),
+    };
+  } catch (error) {
+    throw error;
+  }
+}
   /**
    * Get all submissions with filtering and sorting (Admin/Manager only)
    */

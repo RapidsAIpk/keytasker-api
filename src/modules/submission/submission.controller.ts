@@ -95,7 +95,21 @@ submitBonus(
   getMySubmissions(@Request() req: any, @Body() findAllDto: FindAllSubmissionsDto) {
     return this.submissionService.findMySubmissions(findAllDto, req);
   }
-
+@Get(':id/details')
+@ApiOperation({ summary: 'Get detailed submission with moderator votes' })
+@ApiResponse({
+  status: 200,
+  description: 'Submission details with votes retrieved successfully',
+})
+@ApiResponse({ status: 404, description: 'Submission not found' })
+@ApiResponse({
+  status: 403,
+  description: 'Forbidden - Can only view own submissions (regular users)',
+})
+@ApiParam({ name: 'id', description: 'Submission ID' })
+getSubmissionDetails(@Param('id') id: string, @Request() req: any) {
+  return this.submissionService.getSubmissionWithVotes(id, req.user.id);
+}
   @Get('stats')
   @ApiOperation({ summary: 'Get submission statistics (Admin/Manager only)' })
   @ApiResponse({
