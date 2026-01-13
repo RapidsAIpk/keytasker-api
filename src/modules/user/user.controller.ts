@@ -22,10 +22,8 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { FindAllUsersDto } from './dto/find-all-users.dto';
 import { SaveDeviceInfoDto } from './dto/save-device-info.dto';
 import { LogoutDto } from './dto/logout.dto';
-import { CreateUserDto } from './dto/create-user.dto';
 import { FindOneUsersDto } from './dto/find-one-users.dto';
-import { UpdateUserStatusDto } from './dto/update-user-status.dto';
-import { FindDeletedUsersDto } from './dto/find-deleted-users.dto';
+import { FindDeletedUsersDto } from '../admin/dto/find-deleted-users.dto';
 
 @ApiBearerAuth()
 @ApiTags('user')
@@ -78,39 +76,13 @@ export class UserController {
     return this.userService.update(updateUserDto);
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Patch('find-all-users')
-  findAllUsers(@Request() req, @Body() findAllUsersDto: FindAllUsersDto) {
-    return this.userService.findAllUsers(findAllUsersDto, req);
-  }
-  @UseGuards(JwtAuthGuard)
-  @Patch('find-all-deleted-users')
-  findAllDeletedUsers(
-    @Request() req: any,
-    @Body() findDeletedUsersDto: FindDeletedUsersDto,
-  ) {
-    return this.userService.findAllDeletedUsers(findDeletedUsersDto, req);
-  }
-@UseGuards(JwtAuthGuard)
-@Patch('restore/:id')
-restore(@Param('id') id: string, @Request() req: any) {
-  return this.userService.restore(id, req.user);
-}
+
 
   @Get(':id')
   findOneUser(@Param('id') id: string) {
     return this.userService.findOneUser(id);
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Patch('user-status')
-  updateUserStatus(
-    @Request() req: any,
-    @Body() updateUserStatusDto: UpdateUserStatusDto,
-  ) {
-    const userId = req.user.id;
-    return this.userService.updateUserStatus(updateUserStatusDto, userId);
-  }
 
   @UseGuards(JwtAuthGuard)
   @Post('save-device-info')
@@ -120,8 +92,5 @@ restore(@Param('id') id: string, @Request() req: any) {
 
 
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.userService.remove(id);
-  }
+
 }

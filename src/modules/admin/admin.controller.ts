@@ -8,6 +8,7 @@ import {
   Query,
   Param,
   Patch,
+  Delete,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { SuspendUserDto, ModeratorAccessDto } from './dto/suspend-user.dto';
@@ -24,6 +25,10 @@ import {
   AdminUpdateUserDto,
   AdminUpdateUserPasswordDto,
 } from './dto/admin-update-user.dto';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { FindAllUsersDto } from '@modules/user/dto/find-all-users.dto';
+import { FindDeletedUsersDto } from './dto/find-deleted-users.dto';
 
 @ApiBearerAuth()
 @ApiTags('admin')
@@ -43,6 +48,18 @@ export class AdminController {
   suspendUser(@Body() suspendDto: SuspendUserDto, @Request() req: any) {
     return this.adminService.suspendUser(suspendDto, req.user.id);
   }
+  @Post('add-user')
+  @ApiOperation({ summary: 'Add new user (Admin only)' })
+  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
+  @ApiResponse({ status: 400, description: 'Email already exists' })
+  addUser(@Body() addUserDto: CreateUserDto, @Request() req: any) {
+    return this.adminService.addUser(addUserDto, req.user.id);
+  }
+
   @Patch('update-user/:id')
   @ApiOperation({ summary: 'Update user details (Admin only)' })
   @ApiResponse({ status: 200, description: 'User updated successfully' })
@@ -75,6 +92,37 @@ export class AdminController {
     @Request() req: any,
   ) {
     return this.adminService.adminUpdateUserPassword(id, dto, req.user.id);
+  }
+
+  @Patch('user-status')
+  updateUserStatus(
+    @Request() req: any,
+    @Body() updateUserStatusDto: UpdateUserStatusDto,
+  ) {
+    const userId = req.user.id;
+    return this.adminService.updateUserStatus(updateUserStatusDto, userId);
+  }
+
+  @Patch('find-all-users')
+  findAllUsers(@Request() req, @Body() findAllUsersDto: FindAllUsersDto) {
+    return this.adminService.findAllUsers(findAllUsersDto, req);
+  }
+
+  @Patch('find-all-deleted-users')
+  findAllDeletedUsers(
+    @Request() req: any,
+    @Body() findDeletedUsersDto: FindDeletedUsersDto,
+  ) {
+    return this.adminService.findAllDeletedUsers(findDeletedUsersDto, req);
+  }
+
+  @Patch('restore-user/:id')
+  restore(@Param('id') id: string, @Request() req: any) {
+    return this.adminService.restore(id, req.user);
+  }
+  @Delete('delete-user/:id')
+  remove(@Param('id') id: string) {
+    return this.adminService.remove(id);
   }
   @Post('moderator-access')
   @ApiOperation({ summary: 'Grant or revoke moderator access (Admin only)' })

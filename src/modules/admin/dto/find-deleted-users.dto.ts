@@ -3,7 +3,7 @@ import { SortDto } from '@modules/shared/dto/sort.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsInt, Min, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
-import { UserFilterDto } from './find-all-users.dto';
+import { UserFilterDto } from '../../user/dto/find-all-users.dto';
 
 
 export class FindDeletedUsersDto {

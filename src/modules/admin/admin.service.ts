@@ -7,7 +7,14 @@ import {
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { SuspendUserDto, ModeratorAccessDto } from './dto/suspend-user.dto';
 import { UserRole, AccountStatus } from '@prisma/client';
-import { AdminUpdateUserDto, AdminUpdateUserPasswordDto } from './dto/admin-update-user.dto';
+import {
+  AdminUpdateUserDto,
+  AdminUpdateUserPasswordDto,
+} from './dto/admin-update-user.dto';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { FindAllUsersDto } from '@modules/user/dto/find-all-users.dto';
+import { FindDeletedUsersDto } from './dto/find-deleted-users.dto';
 
 @Injectable()
 export class AdminService {
@@ -61,7 +68,10 @@ export class AdminService {
         });
 
         // Create suspension history
-        if (suspendDto.status === AccountStatus.Suspended || suspendDto.status === AccountStatus.Banned) {
+        if (
+          suspendDto.status === AccountStatus.Suspended ||
+          suspendDto.status === AccountStatus.Banned
+        ) {
           await tx.suspensionHistory.create({
             data: {
               userId: suspendDto.userId,
@@ -84,7 +94,10 @@ export class AdminService {
         await tx.notification.create({
           data: {
             userId: suspendDto.userId,
-            type: suspendDto.status === AccountStatus.Active ? 'ModeratorAccess' : 'SuspensionNotice',
+            type:
+              suspendDto.status === AccountStatus.Active
+                ? 'ModeratorAccess'
+                : 'SuspensionNotice',
             title: 'Account Status Updated',
             message: notificationMessage,
           },
@@ -122,10 +135,84 @@ export class AdminService {
       throw error;
     }
   }
-/**
+  /**
+   * Add new user (Admin only)
+   */
+  async addUser(addUserDto: CreateUserDto, adminId: string) {
+    try {
+      const admin = await this.prisma.user.findUnique({
+        where: { id: adminId },
+      });
+
+      if (!admin || admin.role !== UserRole.Admin) {
+        throw new ForbiddenException('Only admins can add users');
+      }
+
+      if (addUserDto.role === UserRole.Admin) {
+        throw new BadRequestException('Cannot create Admin users');
+      }
+
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: addUserDto.email.toLowerCase() },
+      });
+
+      if (existingUser) {
+        throw new BadRequestException('Email already exists');
+      }
+
+      const tempPassword = this.generateRandomPassword(8);
+      const bcrypt = require('bcrypt');
+      const hashPassword = await bcrypt.hash(tempPassword, 10);
+
+      const newUser = await this.prisma.user.create({
+        data: {
+          email: addUserDto.email.toLowerCase(),
+          fullName: addUserDto.fullName,
+          phoneNumber: addUserDto.phoneNumber,
+          country: addUserDto.country,
+          role: addUserDto.role,
+          password: hashPassword,
+          accountStatus: AccountStatus.Active,
+          emailVerified: true,
+        },
+      });
+
+      await this.prisma.notification.create({
+        data: {
+          userId: newUser.id,
+          type: 'ModeratorAccess',
+          title: 'Account Created',
+          message: `Welcome! Your account has been created by an administrator. A temporary password has been sent to your email: ${tempPassword}`,
+        },
+      });
+
+      const { password, ...safeUser } = newUser;
+      return {
+        message: 'User created successfully',
+        user: safeUser,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  private generateRandomPassword(length: number): string {
+    const charset =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < length; i++) {
+      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return password;
+  }
+  /**
    * Update user details (Admin only)
    */
-  async adminUpdateUser(userId: string, dto: AdminUpdateUserDto, adminId: string) {
+  async adminUpdateUser(
+    userId: string,
+    dto: AdminUpdateUserDto,
+    adminId: string,
+  ) {
     try {
       const admin = await this.prisma.user.findUnique({
         where: { id: adminId },
@@ -148,7 +235,8 @@ export class AdminService {
       if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber;
       if (dto.country !== undefined) data.country = dto.country;
       if (dto.role !== undefined) data.role = dto.role;
-      if (dto.accountStatus !== undefined) data.accountStatus = dto.accountStatus;
+      if (dto.accountStatus !== undefined)
+        data.accountStatus = dto.accountStatus;
 
       const updated = await this.prisma.user.update({
         where: { id: userId },
@@ -211,6 +299,295 @@ export class AdminService {
       throw error;
     }
   }
+
+  async updateUserStatus(
+    updateUserStatusDto: UpdateUserStatusDto,
+    userId: string,
+  ) {
+    try {
+      const adminCheck = await this.prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+      });
+
+      if (adminCheck?.role !== UserRole.Admin) {
+        throw new BadRequestException('You dont have Permission');
+      }
+
+      const updatedUserStatus = await this.prisma.user.update({
+        where: {
+          id: updateUserStatusDto.id,
+        },
+        data: {
+          accountStatus: updateUserStatusDto.accountStatus,
+        },
+      });
+
+      const { password, ...safeUpdatedUserStatus } = updatedUserStatus;
+
+      return {
+        updatedUserStatus: safeUpdatedUserStatus,
+        message: 'User status has been updated',
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+    async findAllUsers({ page, limit, sortDto, filters }: FindAllUsersDto, req) {
+    try {
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
+
+      const matchStage: any = {
+        $or: [{ deletedAt: null }, { deletedAt: { $exists: false } }],
+      };
+
+      if (filters) {
+        if (filters.fullName) {
+          matchStage.fullName = { $regex: filters.fullName, $options: 'i' };
+        }
+        if (filters.email) {
+          matchStage.email = { $regex: filters.email, $options: 'i' };
+        }
+        if (filters.role) {
+          matchStage.role = filters.role;
+        }
+        if (filters.accountStatus) {
+          matchStage.accountStatus = filters.accountStatus;
+        }
+        if (filters.country) {
+          matchStage.country = { $regex: filters.country, $options: 'i' };
+        }
+      }
+
+      const totalCountResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [{ $match: matchStage }, { $count: 'total' }],
+      });
+
+      const totalCount = totalCountResult?.[0]?.total || 0;
+
+      let sortStage: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none') {
+        sortStage[sortDto.name] = sortDto.sort === 'asc' ? 1 : -1;
+      } else {
+        sortStage['createdAt'] = -1;
+      }
+
+      const usersResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [
+          { $match: matchStage },
+          { $sort: sortStage },
+          { $skip: skip },
+          { $limit: pageSize },
+        ],
+      });
+
+      const users = (usersResult || []).map(({ password, _id, ...u }: any) => ({
+        id: _id.$oid,
+        email: u.email,
+        fullName: u.fullName,
+        role: u.role,
+        accountStatus: u.accountStatus,
+        emailVerificationCode: u.emailVerificationCode || null,
+        emailVerified: u.emailVerified,
+        profilePicture: u.profilePicture || null,
+        phoneNumber: u.phoneNumber || null,
+        country: u.country || null,
+        totalEarnings: u.totalEarnings,
+        pendingEarnings: u.pendingEarnings,
+        withdrawnAmount: u.withdrawnAmount,
+        tasksCompleted: u.tasksCompleted,
+        tasksRejected: u.tasksRejected,
+        rejectionRate: u.rejectionRate,
+        canModerate: u.canModerate,
+        moderatorSince: u.moderatorSince?.$date || null,
+        moderatorVotes: u.moderatorVotes,
+        moderatorAccuracy: u.moderatorAccuracy,
+        suspensionEndDate: u.suspensionEndDate?.$date || null,
+        suspensionReason: u.suspensionReason || null,
+        warningsCount: u.warningsCount,
+        createdAt: u.createdAt.$date,
+        updatedAt: u.updatedAt.$date,
+        deletedAt: u.deletedAt?.$date || null,
+        lastLogin: u.lastLogin?.$date || null,
+        mediaId: u.mediaId || null,
+      }));
+
+      return {
+        totalCount,
+        users,
+        page: pageNumber,
+        limit: pageSize,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+  async findAllDeletedUsers(
+    { page, limit, sortDto, filters }: FindDeletedUsersDto,
+    req,
+  ) {
+    try {
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 200);
+      const skip = (pageNumber - 1) * pageSize;
+
+      const matchStage: any = {
+        deletedAt: { $ne: null },
+      };
+
+      if (filters) {
+        if (filters.fullName) {
+          matchStage.fullName = { $regex: filters.fullName, $options: 'i' };
+        }
+        if (filters.email) {
+          matchStage.email = { $regex: filters.email, $options: 'i' };
+        }
+        if (filters.role) {
+          matchStage.role = filters.role;
+        }
+        if (filters.accountStatus) {
+          matchStage.accountStatus = filters.accountStatus;
+        }
+        if (filters.country) {
+          matchStage.country = { $regex: filters.country, $options: 'i' };
+        }
+      }
+
+      const totalCountResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [{ $match: matchStage }, { $count: 'total' }],
+      });
+
+      const totalCount = totalCountResult?.[0]?.total || 0;
+
+      let sortStage: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none') {
+        sortStage[sortDto.name] = sortDto.sort === 'asc' ? 1 : -1;
+      } else {
+        sortStage['createdAt'] = -1;
+      }
+
+      const deletedUsersResult: any = await this.prisma.user.aggregateRaw({
+        pipeline: [
+          { $match: matchStage },
+          { $sort: sortStage },
+          { $skip: skip },
+          { $limit: pageSize },
+        ],
+      });
+
+      const users = (deletedUsersResult || []).map(
+        ({ password, _id, ...u }: any) => ({
+          id: _id.$oid,
+          email: u.email,
+          fullName: u.fullName,
+          role: u.role,
+          accountStatus: u.accountStatus,
+          emailVerificationCode: u.emailVerificationCode || null,
+          emailVerified: u.emailVerified,
+          profilePicture: u.profilePicture || null,
+          phoneNumber: u.phoneNumber || null,
+          country: u.country || null,
+          totalEarnings: u.totalEarnings,
+          pendingEarnings: u.pendingEarnings,
+          withdrawnAmount: u.withdrawnAmount,
+          tasksCompleted: u.tasksCompleted,
+          tasksRejected: u.tasksRejected,
+          rejectionRate: u.rejectionRate,
+          canModerate: u.canModerate,
+          moderatorSince: u.moderatorSince?.$date || null,
+          moderatorVotes: u.moderatorVotes,
+          moderatorAccuracy: u.moderatorAccuracy,
+          suspensionEndDate: u.suspensionEndDate?.$date || null,
+          suspensionReason: u.suspensionReason || null,
+          warningsCount: u.warningsCount,
+          createdAt: u.createdAt.$date,
+          updatedAt: u.updatedAt.$date,
+          deletedAt: u.deletedAt?.$date || null,
+          lastLogin: u.lastLogin?.$date || null,
+          mediaId: u.mediaId || null,
+        }),
+      );
+
+      return {
+        totalCount,
+        users,
+        page: pageNumber,
+        limit: pageSize,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+  async restore(id: string, user: any) {
+    try {
+      console.log('[restore] called with id:', id, 'by user:', {
+        id: user?.id,
+        role: user?.role,
+        name: user?.fullName,
+      });
+
+      const existing = await this.prisma.user.findFirst({
+        where: { id: id },
+      });
+      console.log(
+        '[restore] existing user found?',
+        !!existing,
+        'id:',
+        existing?.id,
+        'deletedAt:',
+        existing?.deletedAt,
+      );
+      if (!existing) throw new BadRequestException('User not found');
+      if (existing.deletedAt == null) {
+        console.log(
+          '[restore] ⚠️ user is not deleted; proceeding to ensure blockchain/onchain but clearing deletedAt anyway',
+        );
+      }
+
+      // 1) Undo soft delete FIRST
+      console.time('[restore] prisma.user.update (clear deletedAt)');
+      let restoredUser = await this.prisma.user.update({
+        where: { id: id },
+        data: { deletedAt: null },
+      });
+      console.timeEnd('[restore] prisma.user.update (clear deletedAt)');
+
+      const { password, ...safeUser } = restoredUser;
+      const result = {
+        success: true,
+        message: 'User has been restored successfully!',
+        restoredUser: safeUser,
+      };
+
+      return result;
+    } catch (error) {
+      console.error('[restore] ❌ error thrown:', error?.message || error);
+      throw error;
+    }
+  }
+    async remove(id: string) {
+    try {
+      const removedUser = await this.prisma.user.update({
+        where: {
+          id: id,
+        },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
+
+      return {
+        message: 'User has been deleted successfully!',
+        removedUser,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
   /**
    * Grant or revoke moderator access (Admin only)
    */
@@ -221,9 +598,7 @@ export class AdminService {
       });
 
       if (!admin || admin.role !== UserRole.Admin) {
-        throw new ForbiddenException(
-          'Only admins can manage moderator access',
-        );
+        throw new ForbiddenException('Only admins can manage moderator access');
       }
 
       const targetUser = await this.prisma.user.findUnique({
@@ -286,7 +661,11 @@ export class AdminService {
   /**
    * Get all suspension history (Admin/Manager only)
    */
-  async getSuspensionHistory(userId: string, page: number = 1, limit: number = 20) {
+  async getSuspensionHistory(
+    userId: string,
+    page: number = 1,
+    limit: number = 20,
+  ) {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
@@ -453,7 +832,9 @@ export class AdminService {
       }
 
       if (!suspension.appealSubmitted) {
-        throw new BadRequestException('No appeal has been submitted for this suspension');
+        throw new BadRequestException(
+          'No appeal has been submitted for this suspension',
+        );
       }
 
       const result = await this.prisma.$transaction(async (tx) => {
