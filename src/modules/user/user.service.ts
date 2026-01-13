@@ -216,7 +216,7 @@ export class UserService {
   }
 
   async findByEmail(email: string) {
-    return await this.prisma.user.findUnique({
+    return await this.prisma.user.findFirst({
       where: {
         email: email.toLocaleLowerCase(),
       },
