@@ -19,6 +19,7 @@ import {
   ApiResponse,
   ApiQuery,
 } from '@nestjs/swagger';
+import { FindMyModerationHistoryDto } from './dto/find-my-moderation-history.dto';
 
 @ApiBearerAuth()
 @ApiTags('moderation')
@@ -75,27 +76,20 @@ export class ModerationController {
     return this.moderationService.getStats(req.user.id);
   }
 
-  @Get('my-history')
-  @ApiOperation({ summary: 'Get my moderation history (Moderators only)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Moderation history retrieved successfully',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - Must have moderator access',
-  })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  getMyHistory(
-    @Request() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    return this.moderationService.getMyModerationHistory(
-      req.user.id,
-      page,
-      limit,
-    );
-  }
+ @Patch('my-history')
+@ApiOperation({ summary: 'Get my moderation history (Moderators only)' })
+@ApiResponse({
+  status: 200,
+  description: 'Moderation history retrieved successfully',
+})
+@ApiResponse({
+  status: 403,
+  description: 'Forbidden - Must have moderator access',
+})
+getMyHistory(
+  @Request() req: any,
+  @Body() findHistoryDto: FindMyModerationHistoryDto,
+) {
+  return this.moderationService.getMyModerationHistory(findHistoryDto, req);
+}
 }

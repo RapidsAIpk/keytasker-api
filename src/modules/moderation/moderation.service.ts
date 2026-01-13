@@ -9,6 +9,7 @@ import { VoteSubmissionDto } from './dto/vote-submission.dto';
 import { FindPendingSubmissionsDto } from './dto/find-pending-submissions.dto';
 import { UserRole, SubmissionStatus, VoteDecision, VoteType } from '@prisma/client';
 import { SortEnum } from '@config/constants';
+import { FindMyModerationHistoryDto } from './dto/find-my-moderation-history.dto';
 
 @Injectable()
 export class ModerationService {
@@ -766,68 +767,122 @@ async findPendingSubmissions(
     }
   }
 
-  /**
-   * Get my moderation history
-   */
-  async getMyModerationHistory(userId: string, page: number = 1, limit: number = 20) {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-      });
+/**
+ * Get my moderation history
+ */
+async getMyModerationHistory(
+  { page, limit, sortDto, filters }: FindMyModerationHistoryDto,
+  req: any,
+) {
+  try {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
 
-      if (!user || !user.canModerate) {
-        throw new ForbiddenException('You do not have moderation access');
+    if (!user || !user.canModerate) {
+      throw new ForbiddenException('You do not have moderation access');
+    }
+
+    const pageNumber = Math.max(1, page);
+    const pageSize = Math.min(Math.max(limit, 1), 100);
+    const skip = (pageNumber - 1) * pageSize;
+
+    // Build where clause
+    const where: any = {
+      moderatorId: req.user.id,
+    };
+
+    // Apply filters
+    if (filters) {
+      if (filters.decision) {
+        where.decision = filters.decision;
       }
 
-      const pageNumber = Math.max(1, page);
-      const pageSize = Math.min(Math.max(limit, 1), 100);
-      const skip = (pageNumber - 1) * pageSize;
+      if (filters.voteType) {
+        where.voteType = filters.voteType;
+      }
 
-      const [votes, totalCount] = await Promise.all([
-        this.prisma.moderationVote.findMany({
-          where: { moderatorId: userId },
-          skip,
-          take: pageSize,
-          orderBy: { votedAt: 'desc' },
-          include: {
-            submission: {
-              select: {
-                id: true,
-                status: true,
-                baseTotalVotes: true,
-                baseApproveVotes: true,
-                baseRejectVotes: true,
-                bonusTotalVotes: true,
-                bonusApproveVotes: true,
-                bonusRejectVotes: true,
-                task: {
-                  select: {
-                    id: true,
-                    taskType: true,
-                    topicInstruction: true,
-                  },
+      if (filters.wasCorrect !== undefined) {
+        where.wasCorrect = filters.wasCorrect;
+      }
+
+      if (filters.submissionStatus) {
+        where.submission = {
+          status: filters.submissionStatus,
+        };
+      }
+    }
+
+    // Apply sorting
+    let orderBy: any = {};
+    if (sortDto?.sort && sortDto?.sort !== 'none') {
+      orderBy[sortDto.name] = sortDto.sort;
+    } else {
+      orderBy['votedAt'] = SortEnum.Desc; // Default: newest first
+    }
+
+    const [votes, totalCount] = await Promise.all([
+      this.prisma.moderationVote.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy,
+        include: {
+          submission: {
+            select: {
+              id: true,
+              status: true,
+              screenshotUrl: true,
+              bonusScreenshotUrl: true,
+              aiDetectionAnswer: true,
+              reasonText: true,
+              baseTotalVotes: true,
+              baseApproveVotes: true,
+              baseRejectVotes: true,
+              bonusTotalVotes: true,
+              bonusApproveVotes: true,
+              bonusRejectVotes: true,
+              basePaymentAwarded: true,
+              bonusPaymentAwarded: true,
+              totalPayment: true,
+              submittedAt: true,
+              finalizedAt: true,
+              task: {
+                select: {
+                  id: true,
+                  taskType: true,
+                  topicInstruction: true,
+                  basePayment: true,
+                  bonusPayment: true,
+                },
+              },
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
                 },
               },
             },
           },
-        }),
-        this.prisma.moderationVote.count({
-          where: { moderatorId: userId },
-        }),
-      ]);
-
-      return {
-        votes,
-        totalCount,
-        page: pageNumber,
-        limit: pageSize,
-        moderatorStats: {
-          totalVotes: user.moderatorVotes,
-          accuracy: user.moderatorAccuracy,
         },
-      };
-    } catch (error) {
-      throw error;
-    }
+      }),
+      this.prisma.moderationVote.count({
+        where,
+      }),
+    ]);
+
+    return {
+      totalCount,
+      votes,
+      page: pageNumber,
+      limit: pageSize,
+      moderatorStats: {
+        totalVotes: user.moderatorVotes,
+        accuracy: user.moderatorAccuracy,
+      },
+    };
+  } catch (error) {
+    throw error;
   }
+}
 }
