@@ -8,6 +8,7 @@ import { PrismaService } from '@modules/prisma/prisma.service';
 import { SubmitIdeaDto } from './dto/submit-idea.dto';
 import { ReviewIdeaDto } from './dto/review-idea.dto';
 import { FindIdeasDto } from './dto/find-ideas.dto';
+import { FindMyIdeasDto } from './dto/find-my-ideas.dto';
 import { UserRole } from '@prisma/client';
 import { SortEnum } from '@config/constants';
 
@@ -15,9 +16,6 @@ import { SortEnum } from '@config/constants';
 export class IdeaService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Submit a new idea
-   */
   async submitIdea(submitDto: SubmitIdeaDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -28,7 +26,6 @@ export class IdeaService {
         throw new NotFoundException('User not found');
       }
 
-      // Check if user ideas are enabled
       const settings = await this.prisma.platformSettings.findFirst();
       if (!settings?.allowUserIdeas) {
         throw new BadRequestException('User idea submissions are currently disabled');
@@ -52,7 +49,6 @@ export class IdeaService {
         },
       });
 
-      // Create notification
       await this.prisma.notification.create({
         data: {
           userId,
@@ -72,9 +68,6 @@ export class IdeaService {
     }
   }
 
-  /**
-   * Review an idea (Admin/Manager only)
-   */
   async reviewIdea(reviewDto: ReviewIdeaDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -108,7 +101,6 @@ export class IdeaService {
           },
         });
 
-        // Create notification
         await tx.notification.create({
           data: {
             userId: idea.userId,
@@ -131,9 +123,6 @@ export class IdeaService {
     }
   }
 
-  /**
-   * Get all ideas (Admin/Manager view all, Users view own)
-   */
   async findAll({ page, limit, sortDto, filters }: FindIdeasDto, req: any) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -150,12 +139,10 @@ export class IdeaService {
 
       const where: any = { deletedAt: null };
 
-      // Regular users can only see their own ideas
       if (user.role === UserRole.User) {
         where.userId = req.user.id;
       }
 
-      // Apply filters
       if (filters) {
         if (filters.status) where.status = filters.status;
         if (filters.category) where.category = filters.category;
@@ -185,18 +172,16 @@ export class IdeaService {
 
       return {
         totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
         ideas,
-        page: pageNumber,
-        limit: pageSize,
       };
     } catch (error) {
       throw error;
     }
   }
 
-  /**
-   * Get a single idea
-   */
   async findOne(id: string, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -219,7 +204,6 @@ export class IdeaService {
         throw new NotFoundException('Idea not found');
       }
 
-      // Users can only view their own ideas
       if (user?.role === UserRole.User && idea.userId !== userId) {
         throw new ForbiddenException('You can only view your own ideas');
       }
@@ -230,9 +214,6 @@ export class IdeaService {
     }
   }
 
-  /**
-   * Get idea statistics (Admin/Manager only)
-   */
   async getStats(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -274,32 +255,41 @@ export class IdeaService {
     }
   }
 
-  /**
-   * Get my ideas
-   */
-  async getMyIdeas(userId: string, page: number = 1, limit: number = 20) {
+  async getMyIdeas(
+    { page, limit, sortDto, filters }: FindMyIdeasDto,
+    userId: string,
+  ) {
     try {
       const pageNumber = Math.max(1, page);
       const pageSize = Math.min(Math.max(limit, 1), 100);
       const skip = (pageNumber - 1) * pageSize;
 
-      const [ideas, totalCount] = await Promise.all([
-        this.prisma.userIdea.findMany({
-          where: { userId, deletedAt: null },
-          skip,
-          take: pageSize,
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.userIdea.count({
-          where: { userId, deletedAt: null },
-        }),
-      ]);
+      const where: any = { userId, deletedAt: null };
+
+      if (filters) {
+        if (filters.status) where.status = filters.status;
+      }
+
+      const totalCount = await this.prisma.userIdea.count({ where });
+
+      let orderBy: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['createdAt'] = SortEnum.Desc;
+
+      const ideas = await this.prisma.userIdea.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy,
+      });
 
       return {
         ideas,
         totalCount,
-        page: pageNumber,
-        limit: pageSize,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
       };
     } catch (error) {
       throw error;

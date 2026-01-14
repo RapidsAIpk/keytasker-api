@@ -7,12 +7,12 @@ import {
   Param,
   UseGuards,
   Request,
-  Query,
 } from '@nestjs/common';
 import { SupportService } from './support.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { RespondTicketDto } from './dto/respond-ticket.dto';
 import { FindTicketsDto, UpdateTicketStatusDto } from './dto/find-tickets.dto';
+import { FindMyTicketsDto } from './dto/find-my-tickets.dto';
 import { JwtAuthGuard } from '@config/authentication/guards/jwt-auth.guard';
 import {
   ApiBearerAuth,
@@ -20,7 +20,6 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
-  ApiQuery,
 } from '@nestjs/swagger';
 
 @ApiBearerAuth()
@@ -57,17 +56,11 @@ export class SupportController {
     return this.supportService.findAll(findTicketsDto, req);
   }
 
-  @Get('my-tickets')
+  @Patch('my-tickets')
   @ApiOperation({ summary: 'Get my support tickets' })
   @ApiResponse({ status: 200, description: 'Tickets retrieved successfully' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  getMyTickets(
-    @Request() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    return this.supportService.getMyTickets(req.user.id, page, limit);
+  getMyTickets(@Request() req: any, @Body() findMyTicketsDto: FindMyTicketsDto) {
+    return this.supportService.getMyTickets(findMyTicketsDto, req.user.id);
   }
 
   @Get('stats')

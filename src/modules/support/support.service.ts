@@ -8,6 +8,7 @@ import { PrismaService } from '@modules/prisma/prisma.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { RespondTicketDto } from './dto/respond-ticket.dto';
 import { FindTicketsDto, UpdateTicketStatusDto } from './dto/find-tickets.dto';
+import { FindMyTicketsDto } from './dto/find-my-tickets.dto';
 import { UserRole } from '@prisma/client';
 import { SortEnum } from '@config/constants';
 
@@ -15,9 +16,6 @@ import { SortEnum } from '@config/constants';
 export class SupportService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Create a new support ticket
-   */
   async createTicket(createDto: CreateTicketDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -48,10 +46,9 @@ export class SupportService {
         },
       });
 
-      // Create notification for admins/managers (could be improved with role-based targeting)
       await this.prisma.notification.create({
         data: {
-          userId: userId, // Placeholder - in production, notify admin/manager
+          userId: userId,
           type: 'SupportResponse',
           title: 'Support Ticket Created',
           message: `Your support ticket "${ticket.subject}" has been created.`,
@@ -68,9 +65,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * Respond to a support ticket
-   */
   async respondToTicket(respondDto: RespondTicketDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -90,12 +84,10 @@ export class SupportService {
         throw new NotFoundException('Ticket not found');
       }
 
-      // Check permissions for staff responses
       const isStaffResponse =
         respondDto.isStaffResponse &&
         (user.role === UserRole.Admin || user.role === UserRole.Manager);
 
-      // Users can only respond to their own tickets (non-staff responses)
       if (!isStaffResponse && ticket.userId !== userId) {
         throw new ForbiddenException('You can only respond to your own tickets');
       }
@@ -119,7 +111,6 @@ export class SupportService {
           },
         });
 
-        // Update ticket status if it was resolved
         if (ticket.status === 'Open') {
           await tx.supportTicket.update({
             where: { id: respondDto.ticketId },
@@ -127,7 +118,6 @@ export class SupportService {
           });
         }
 
-        // Create notification for ticket owner if staff responded
         if (isStaffResponse && ticket.userId !== userId) {
           await tx.notification.create({
             data: {
@@ -152,9 +142,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * Get all tickets (Admin/Manager view all, Users view own)
-   */
   async findAll({ page, limit, sortDto, filters }: FindTicketsDto, req: any) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -171,12 +158,10 @@ export class SupportService {
 
       const where: any = { deletedAt: null };
 
-      // Regular users can only see their own tickets
       if (user.role === UserRole.User) {
         where.userId = req.user.id;
       }
 
-      // Apply filters
       if (filters) {
         if (filters.status) where.status = filters.status;
         if (filters.priority) where.priority = filters.priority;
@@ -213,18 +198,16 @@ export class SupportService {
 
       return {
         totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
         tickets,
-        page: pageNumber,
-        limit: pageSize,
       };
     } catch (error) {
       throw error;
     }
   }
 
-  /**
-   * Get a single ticket with responses
-   */
   async findOne(id: string, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -260,7 +243,6 @@ export class SupportService {
         throw new NotFoundException('Ticket not found');
       }
 
-      // Users can only view their own tickets
       if (user?.role === UserRole.User && ticket.userId !== userId) {
         throw new ForbiddenException('You can only view your own tickets');
       }
@@ -271,9 +253,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * Update ticket status (Admin/Manager only)
-   */
   async updateStatus(updateDto: UpdateTicketStatusDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -309,7 +288,6 @@ export class SupportService {
           },
         });
 
-        // Create notification
         if (updateDto.status === 'Resolved' || updateDto.status === 'Closed') {
           await tx.notification.create({
             data: {
@@ -334,9 +312,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * Get support statistics (Admin/Manager only)
-   */
   async getStats(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -384,39 +359,48 @@ export class SupportService {
     }
   }
 
-  /**
-   * Get my tickets (Users)
-   */
-  async getMyTickets(userId: string, page: number = 1, limit: number = 20) {
+  async getMyTickets(
+    { page, limit, sortDto, filters }: FindMyTicketsDto,
+    userId: string,
+  ) {
     try {
       const pageNumber = Math.max(1, page);
       const pageSize = Math.min(Math.max(limit, 1), 100);
       const skip = (pageNumber - 1) * pageSize;
 
-      const [tickets, totalCount] = await Promise.all([
-        this.prisma.supportTicket.findMany({
-          where: { userId, deletedAt: null },
-          skip,
-          take: pageSize,
-          orderBy: { createdAt: 'desc' },
-          include: {
-            _count: {
-              select: {
-                responses: true,
-              },
+      const where: any = { userId, deletedAt: null };
+
+      if (filters) {
+        if (filters.status) where.status = filters.status;
+      }
+
+      const totalCount = await this.prisma.supportTicket.count({ where });
+
+      let orderBy: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['createdAt'] = SortEnum.Desc;
+
+      const tickets = await this.prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy,
+        include: {
+          _count: {
+            select: {
+              responses: true,
             },
           },
-        }),
-        this.prisma.supportTicket.count({
-          where: { userId, deletedAt: null },
-        }),
-      ]);
+        },
+      });
 
       return {
         tickets,
         totalCount,
-        page: pageNumber,
-        limit: pageSize,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
       };
     } catch (error) {
       throw error;

@@ -3,16 +3,17 @@ import {
   Get,
   UseGuards,
   Request,
-  Query,
+  Patch,
+  Body,
 } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
+import { FindActivityLogsDto } from './dto/find-activity-logs.dto';
 import { JwtAuthGuard } from '@config/authentication/guards/jwt-auth.guard';
 import {
   ApiBearerAuth,
   ApiTags,
   ApiOperation,
   ApiResponse,
-  ApiQuery,
 } from '@nestjs/swagger';
 
 @ApiBearerAuth()
@@ -66,7 +67,7 @@ export class AnalyticsController {
     return this.analyticsService.getTaskPerformance(req.user.id);
   }
 
-  @Get('activity-logs')
+  @Patch('activity-logs')
   @ApiOperation({ summary: 'Get activity logs (Admin/Manager only)' })
   @ApiResponse({
     status: 200,
@@ -76,13 +77,10 @@ export class AnalyticsController {
     status: 403,
     description: 'Forbidden - Admin/Manager access required',
   })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
   getActivityLogs(
     @Request() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Body() findLogsDto: FindActivityLogsDto,
   ) {
-    return this.analyticsService.getActivityLogs(req.user.id, page, limit);
+    return this.analyticsService.getActivityLogs(findLogsDto, req.user.id);
   }
 }

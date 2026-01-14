@@ -4,15 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '@modules/prisma/prisma.service';
+import { FindActivityLogsDto } from './dto/find-activity-logs.dto';
 import { UserRole } from '@prisma/client';
+import { SortEnum } from '@config/constants';
 
 @Injectable()
 export class AnalyticsService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Get dashboard overview (Admin/Manager only)
-   */
   async getDashboardOverview(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -124,9 +123,6 @@ export class AnalyticsService {
     }
   }
 
-  /**
-   * Get user analytics (Admin/Manager only)
-   */
   async getUserAnalytics(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -142,7 +138,6 @@ export class AnalyticsService {
         );
       }
 
-      // Top earners
       const topEarners = await this.prisma.user.findMany({
         where: { role: UserRole.User },
         orderBy: { totalEarnings: 'desc' },
@@ -156,7 +151,6 @@ export class AnalyticsService {
         },
       });
 
-      // Recent signups
       const recentSignups = await this.prisma.user.findMany({
         orderBy: { createdAt: 'desc' },
         take: 10,
@@ -170,7 +164,6 @@ export class AnalyticsService {
         },
       });
 
-      // User growth (last 30 days)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -192,9 +185,6 @@ export class AnalyticsService {
     }
   }
 
-  /**
-   * Get task performance analytics (Admin/Manager only)
-   */
   async getTaskPerformance(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -210,19 +200,17 @@ export class AnalyticsService {
         );
       }
 
-      // Tasks by type
       const tasksByType = await this.prisma.task.groupBy({
         by: ['taskType'],
         where: { deletedAt: null },
         _count: true,
       });
 
-      // Tasks with low completion rates
       const lowCompletionTasks = await this.prisma.task.findMany({
         where: {
           status: 'Active',
           deletedAt: null,
-          completedCount: { lt: 5 }, // Less than 5 completions
+          completedCount: { lt: 5 },
         },
         orderBy: { completedCount: 'asc' },
         take: 10,
@@ -236,7 +224,6 @@ export class AnalyticsService {
         },
       });
 
-      // Tasks with high rejection rates
       const highRejectionTasks = await this.prisma.task.findMany({
         where: {
           deletedAt: null,
@@ -264,13 +251,9 @@ export class AnalyticsService {
     }
   }
 
-  /**
-   * Get activity logs (Admin/Manager only)
-   */
   async getActivityLogs(
+    { page, limit, sortDto, filters }: FindActivityLogsDto,
     userId: string,
-    page: number = 1,
-    limit: number = 20,
   ) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -290,30 +273,43 @@ export class AnalyticsService {
       const pageSize = Math.min(Math.max(limit, 1), 100);
       const skip = (pageNumber - 1) * pageSize;
 
-      const [logs, totalCount] = await Promise.all([
-        this.prisma.activityLog.findMany({
-          skip,
-          take: pageSize,
-          orderBy: { createdAt: 'desc' },
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-                role: true,
-              },
+      const where: any = {};
+
+      if (filters) {
+        if (filters.activityType) where.activityType = filters.activityType;
+        if (filters.userId) where.userId = filters.userId;
+      }
+
+      const totalCount = await this.prisma.activityLog.count({ where });
+
+      let orderBy: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['createdAt'] = SortEnum.Desc;
+
+      const logs = await this.prisma.activityLog.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy,
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              role: true,
             },
           },
-        }),
-        this.prisma.activityLog.count(),
-      ]);
+        },
+      });
 
       return {
         logs,
         totalCount,
-        page: pageNumber,
-        limit: pageSize,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
       };
     } catch (error) {
       throw error;

@@ -7,12 +7,12 @@ import {
   Param,
   UseGuards,
   Request,
-  Query,
 } from '@nestjs/common';
 import { IdeaService } from './idea.service';
 import { SubmitIdeaDto } from './dto/submit-idea.dto';
 import { ReviewIdeaDto } from './dto/review-idea.dto';
 import { FindIdeasDto } from './dto/find-ideas.dto';
+import { FindMyIdeasDto } from './dto/find-my-ideas.dto';
 import { JwtAuthGuard } from '@config/authentication/guards/jwt-auth.guard';
 import {
   ApiBearerAuth,
@@ -20,7 +20,6 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
-  ApiQuery,
 } from '@nestjs/swagger';
 
 @ApiBearerAuth()
@@ -62,17 +61,11 @@ export class IdeaController {
     return this.ideaService.findAll(findIdeasDto, req);
   }
 
-  @Get('my-ideas')
+  @Patch('my-ideas')
   @ApiOperation({ summary: 'Get my submitted ideas' })
   @ApiResponse({ status: 200, description: 'Ideas retrieved successfully' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  getMyIdeas(
-    @Request() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    return this.ideaService.getMyIdeas(req.user.id, page, limit);
+  getMyIdeas(@Request() req: any, @Body() findMyIdeasDto: FindMyIdeasDto) {
+    return this.ideaService.getMyIdeas(findMyIdeasDto, req.user.id);
   }
 
   @Get('stats')
