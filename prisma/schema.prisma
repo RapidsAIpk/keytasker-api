@@ -234,10 +234,10 @@ model TaskSubmission {
   approveVotes         Int     @default(0)
   rejectVotes          Int     @default(0)
   needsAdditionalVotes Boolean @default(false)
- // Moderation - Base Submission
-  baseTotalVotes   Int @default(0)
-  baseApproveVotes Int @default(0)
-  baseRejectVotes  Int @default(0)
+  // Moderation - Base Submission
+  baseTotalVotes       Int     @default(0)
+  baseApproveVotes     Int     @default(0)
+  baseRejectVotes      Int     @default(0)
 
   // Moderation - Bonus Submission
   bonusTotalVotes   Int @default(0)
@@ -245,9 +245,12 @@ model TaskSubmission {
   bonusRejectVotes  Int @default(0)
 
   // Payment
-  basePaymentAwarded  Boolean @default(false)
-  bonusPaymentAwarded Boolean @default(false)
-  totalPayment        Float   @default(0)
+  basePaymentAwarded  Boolean   @default(false)
+  bonusPaymentAwarded Boolean   @default(false)
+  totalPayment        Float     @default(0)
+  // ADD THESE 2 LINES:
+  paymentId           String?   @db.ObjectId
+  paidAt              DateTime?
 
   // Timestamps
   submittedAt DateTime  @default(now())
@@ -277,11 +280,11 @@ model ModerationVote {
   decision   VoteDecision
   comment    String?
   wasCorrect Boolean?
-voteType   VoteType     @default(Base)
-  votedAt   DateTime  @default(now())
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @default(now()) @updatedAt
-  deletedAt DateTime?
+  voteType   VoteType     @default(Base)
+  votedAt    DateTime     @default(now())
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @default(now()) @updatedAt
+  deletedAt  DateTime?
 
   @@unique([submissionId, moderatorId, voteType])
 }
@@ -647,6 +650,7 @@ enum ActivityType {
   ModeratorFlagged
   SettingsChanged
 }
+
 enum VoteType {
   Base
   Bonus

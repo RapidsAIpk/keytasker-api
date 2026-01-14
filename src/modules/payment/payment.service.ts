@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { RequestPaymentDto } from './dto/request-payment.dto';
 import { FindPaymentsDto } from './dto/find-payments.dto';
+import { FindMyPaymentsDto } from './dto/find-my-payments.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { UserRole, PaymentStatus } from '@prisma/client';
 import { SortEnum } from '@config/constants';
@@ -15,9 +16,6 @@ import { SortEnum } from '@config/constants';
 export class PaymentService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Request a payment/withdrawal (Users only)
-   */
   async requestPayment(requestDto: RequestPaymentDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -28,25 +26,25 @@ export class PaymentService {
         throw new NotFoundException('User not found');
       }
 
-      // Get minimum withdrawal amount from settings
+      if (user.accountStatus === 'Suspended' || user.accountStatus === 'Banned') {
+        throw new ForbiddenException('Your account is suspended');
+      }
+
       const settings = await this.prisma.platformSettings.findFirst();
       const minimumWithdrawal = settings?.minimumWithdrawal || 10;
 
-      // Check if user has sufficient balance
-      if (user.pendingEarnings < requestDto.amount) {
-        throw new BadRequestException(
-          `Insufficient balance. Available: $${user.pendingEarnings.toFixed(2)}`,
-        );
-      }
-
-      // Check minimum withdrawal
       if (requestDto.amount < minimumWithdrawal) {
         throw new BadRequestException(
           `Minimum withdrawal amount is $${minimumWithdrawal}`,
         );
       }
 
-      // Check for existing pending payment
+      if (user.pendingEarnings < requestDto.amount) {
+        throw new BadRequestException(
+          `Insufficient balance. Available: $${user.pendingEarnings.toFixed(2)}`,
+        );
+      }
+
       const existingPending = await this.prisma.payment.findFirst({
         where: {
           userId,
@@ -60,18 +58,14 @@ export class PaymentService {
         );
       }
 
-      // Get user's approved submissions for this payment
       const submissions = await this.prisma.taskSubmission.findMany({
         where: {
           userId,
           status: 'Approved',
-          basePaymentAwarded: true,
+          paymentId: null,
         },
-        select: {
-          id: true,
-          totalPayment: true,
-          basePaymentAwarded: true,
-          bonusPaymentAwarded: true,
+        orderBy: { finalizedAt: 'asc' },
+        include: {
           task: {
             select: {
               basePayment: true,
@@ -81,33 +75,39 @@ export class PaymentService {
         },
       });
 
-      // Calculate payment breakdown
+      let totalFromSubmissions = 0;
       let basePayments = 0;
       let bonusPayments = 0;
       const submissionIds: string[] = [];
 
-      submissions.forEach((submission) => {
-        if (submission.totalPayment <= requestDto.amount - basePayments - bonusPayments) {
+      for (const submission of submissions) {
+        if (totalFromSubmissions + submission.totalPayment <= requestDto.amount) {
           submissionIds.push(submission.id);
+          totalFromSubmissions += submission.totalPayment;
+
           if (submission.basePaymentAwarded) {
             basePayments += submission.task.basePayment;
           }
           if (submission.bonusPaymentAwarded) {
             bonusPayments += submission.task.bonusPayment;
           }
+        } else {
+          break;
         }
-      });
+      }
 
-      // Add moderation fees if user is a moderator
-      const moderationFees = user.canModerate 
-        ? Math.min(
-            requestDto.amount - basePayments - bonusPayments,
-            user.pendingEarnings - basePayments - bonusPayments,
-          )
-        : 0;
+      const moderationFees = requestDto.amount - totalFromSubmissions;
+
+      const totalAvailableSubmissions = submissions.reduce((sum, s) => sum + s.totalPayment, 0);
+      const estimatedModerationEarnings = user.pendingEarnings - totalAvailableSubmissions;
+
+      if (moderationFees > estimatedModerationEarnings) {
+        throw new BadRequestException(
+          `Cannot fulfill payment request. Maximum available: $${user.pendingEarnings.toFixed(2)}`,
+        );
+      }
 
       const payment = await this.prisma.$transaction(async (tx) => {
-        // Create payment request
         const newPayment = await tx.payment.create({
           data: {
             userId,
@@ -121,7 +121,16 @@ export class PaymentService {
           },
         });
 
-        // Deduct from pending earnings
+        if (submissionIds.length > 0) {
+          await tx.taskSubmission.updateMany({
+            where: { id: { in: submissionIds } },
+            data: {
+              paymentId: newPayment.id,
+              paidAt: new Date(),
+            },
+          });
+        }
+
         await tx.user.update({
           where: { id: userId },
           data: {
@@ -131,7 +140,6 @@ export class PaymentService {
           },
         });
 
-        // Create notification
         await tx.notification.create({
           data: {
             userId,
@@ -154,9 +162,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Get all payments with filtering (Admin/Manager view all, Users view own)
-   */
   async findAll({ page, limit, sortDto, filters }: FindPaymentsDto, req: any) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -173,12 +178,10 @@ export class PaymentService {
 
       const where: any = { deletedAt: null };
 
-      // Regular users can only see their own payments
       if (user.role === UserRole.User) {
         where.userId = req.user.id;
       }
 
-      // Apply filters
       if (filters) {
         if (filters.status) where.status = filters.status;
         if (filters.paymentMethod) where.paymentMethod = filters.paymentMethod;
@@ -191,7 +194,7 @@ export class PaymentService {
         }
       }
 
-      let totalCount = await this.prisma.payment.count({ where });
+      const totalCount = await this.prisma.payment.count({ where });
 
       let orderBy: any = {};
       if (sortDto?.sort && sortDto?.sort !== 'none')
@@ -209,6 +212,7 @@ export class PaymentService {
               id: true,
               fullName: true,
               email: true,
+              accountStatus: true,
             },
           },
         },
@@ -216,18 +220,55 @@ export class PaymentService {
 
       return {
         totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
         payments,
-        page: pageNumber,
-        limit: pageSize,
       };
     } catch (error) {
       throw error;
     }
   }
 
-  /**
-   * Get a single payment by ID
-   */
+  async getMyPayments({ page, limit, sortDto, filters }: FindMyPaymentsDto, userId: string) {
+    try {
+      const pageNumber = Math.max(1, page);
+      const pageSize = Math.min(Math.max(limit, 1), 100);
+      const skip = (pageNumber - 1) * pageSize;
+
+      const where: any = { userId, deletedAt: null };
+
+      if (filters) {
+        if (filters.status) where.status = filters.status;
+        if (filters.paymentMethod) where.paymentMethod = filters.paymentMethod;
+      }
+
+      const totalCount = await this.prisma.payment.count({ where });
+
+      let orderBy: any = {};
+      if (sortDto?.sort && sortDto?.sort !== 'none')
+        orderBy[sortDto.name] = sortDto.sort;
+      else orderBy['createdAt'] = SortEnum.Desc;
+
+      const payments = await this.prisma.payment.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy,
+      });
+
+      return {
+        payments,
+        totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+        currentPage: pageNumber,
+        pageSize,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
   async findOne(id: string, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -242,6 +283,7 @@ export class PaymentService {
               id: true,
               fullName: true,
               email: true,
+              accountStatus: true,
             },
           },
         },
@@ -251,11 +293,7 @@ export class PaymentService {
         throw new NotFoundException('Payment not found');
       }
 
-      // Users can only view their own payments
-      if (
-        user?.role === UserRole.User &&
-        payment.userId !== userId
-      ) {
+      if (user?.role === UserRole.User && payment.userId !== userId) {
         throw new ForbiddenException('You can only view your own payments');
       }
 
@@ -265,9 +303,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Review a payment (Admin/Manager only)
-   */
   async reviewPayment(reviewDto: ReviewPaymentDto, userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -285,7 +320,15 @@ export class PaymentService {
 
       const payment = await this.prisma.payment.findUnique({
         where: { id: reviewDto.paymentId },
-        include: { user: true },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       if (!payment) {
@@ -294,7 +337,16 @@ export class PaymentService {
 
       if (payment.status !== PaymentStatus.Pending) {
         throw new BadRequestException(
-          'Only pending payments can be reviewed',
+          `Payment has already been reviewed. Current status: ${payment.status}`,
+        );
+      }
+
+      if (
+        reviewDto.status !== PaymentStatus.Completed &&
+        reviewDto.status !== PaymentStatus.Failed
+      ) {
+        throw new BadRequestException(
+          'Payment can only be marked as Completed or Failed',
         );
       }
 
@@ -313,8 +365,15 @@ export class PaymentService {
           },
         });
 
-        // If payment was rejected, return amount to user's pending balance
         if (reviewDto.status === PaymentStatus.Failed) {
+          await tx.taskSubmission.updateMany({
+            where: { paymentId: payment.id },
+            data: {
+              paymentId: null,
+              paidAt: null,
+            },
+          });
+
           await tx.user.update({
             where: { id: payment.userId },
             data: {
@@ -325,7 +384,6 @@ export class PaymentService {
           });
         }
 
-        // If payment was completed, update user's withdrawn amount
         if (reviewDto.status === PaymentStatus.Completed) {
           await tx.user.update({
             where: { id: payment.userId },
@@ -337,7 +395,6 @@ export class PaymentService {
           });
         }
 
-        // Create notification
         const notificationMessage =
           reviewDto.status === PaymentStatus.Completed
             ? `Your payment of $${payment.amount.toFixed(2)} has been processed successfully.`
@@ -355,7 +412,6 @@ export class PaymentService {
           },
         });
 
-        // Log activity
         await tx.activityLog.create({
           data: {
             userId,
@@ -381,9 +437,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Export payments to CSV (Admin/Manager only)
-   */
   async exportToCSV(userId: string, filters?: any) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -401,11 +454,13 @@ export class PaymentService {
 
       const where: any = { deletedAt: null };
 
-      // Apply filters if provided
       if (filters?.status) where.status = filters.status;
       if (filters?.flaggedOnly) where.flaggedAsSuspicious = true;
       if (filters?.startDate) {
-        where.createdAt = { ...where.createdAt, gte: new Date(filters.startDate) };
+        where.createdAt = {
+          ...where.createdAt,
+          gte: new Date(filters.startDate),
+        };
       }
       if (filters?.endDate) {
         where.createdAt = { ...where.createdAt, lte: new Date(filters.endDate) };
@@ -425,7 +480,15 @@ export class PaymentService {
         },
       });
 
-      // Generate CSV content
+      const escapeCsv = (value: any): string => {
+        if (value === null || value === undefined) return '';
+        const str = String(value);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
       const csvHeader = [
         'Payment ID',
         'User ID',
@@ -446,27 +509,26 @@ export class PaymentService {
 
       const csvRows = payments.map((payment) =>
         [
-          payment.id,
-          payment.user.id,
-          `"${payment.user.fullName}"`,
-          payment.user.email,
-          payment.amount,
-          payment.basePayments,
-          payment.bonusPayments,
-          payment.moderationFees,
+          escapeCsv(payment.id),
+          escapeCsv(payment.user.id),
+          escapeCsv(payment.user.fullName),
+          escapeCsv(payment.user.email),
+          payment.amount.toFixed(2),
+          payment.basePayments.toFixed(2),
+          payment.bonusPayments.toFixed(2),
+          payment.moderationFees.toFixed(2),
           payment.status,
           payment.paymentMethod,
           payment.flaggedAsSuspicious ? 'Yes' : 'No',
           payment.createdAt.toISOString(),
           payment.reviewedAt?.toISOString() || '',
           payment.processedAt?.toISOString() || '',
-          `"${payment.reviewNotes || ''}"`,
+          escapeCsv(payment.reviewNotes || ''),
         ].join(','),
       );
 
       const csvContent = [csvHeader, ...csvRows].join('\n');
 
-      // Log activity
       await this.prisma.activityLog.create({
         data: {
           userId,
@@ -489,9 +551,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Get payment statistics (Admin/Manager only)
-   */
   async getStats(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -516,19 +575,25 @@ export class PaymentService {
         totalPaidOut,
         totalPending,
       ] = await Promise.all([
-        this.prisma.payment.count(),
-        this.prisma.payment.count({ where: { status: PaymentStatus.Pending } }),
+        this.prisma.payment.count({ where: { deletedAt: null } }),
         this.prisma.payment.count({
-          where: { status: PaymentStatus.Completed },
+          where: { status: PaymentStatus.Pending, deletedAt: null },
         }),
-        this.prisma.payment.count({ where: { status: PaymentStatus.Failed } }),
-        this.prisma.payment.count({ where: { flaggedAsSuspicious: true } }),
+        this.prisma.payment.count({
+          where: { status: PaymentStatus.Completed, deletedAt: null },
+        }),
+        this.prisma.payment.count({
+          where: { status: PaymentStatus.Failed, deletedAt: null },
+        }),
+        this.prisma.payment.count({
+          where: { flaggedAsSuspicious: true, deletedAt: null },
+        }),
         this.prisma.payment.aggregate({
-          where: { status: PaymentStatus.Completed },
+          where: { status: PaymentStatus.Completed, deletedAt: null },
           _sum: { amount: true },
         }),
         this.prisma.payment.aggregate({
-          where: { status: PaymentStatus.Pending },
+          where: { status: PaymentStatus.Pending, deletedAt: null },
           _sum: { amount: true },
         }),
       ]);
@@ -541,38 +606,6 @@ export class PaymentService {
         flaggedPayments,
         totalPaidOut: totalPaidOut._sum.amount || 0,
         totalPending: totalPending._sum.amount || 0,
-      };
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Get my payment requests (Users)
-   */
-  async getMyPayments(userId: string, page: number = 1, limit: number = 20) {
-    try {
-      const pageNumber = Math.max(1, page);
-      const pageSize = Math.min(Math.max(limit, 1), 100);
-      const skip = (pageNumber - 1) * pageSize;
-
-      const [payments, totalCount] = await Promise.all([
-        this.prisma.payment.findMany({
-          where: { userId, deletedAt: null },
-          skip,
-          take: pageSize,
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.payment.count({
-          where: { userId, deletedAt: null },
-        }),
-      ]);
-
-      return {
-        payments,
-        totalCount,
-        page: pageNumber,
-        limit: pageSize,
       };
     } catch (error) {
       throw error;

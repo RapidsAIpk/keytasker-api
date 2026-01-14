@@ -147,24 +147,21 @@ export class UserService {
       throw error;
     }
   }
+
   async verifyEmail(dto: VerifyEmailDto) {
-    // Find the user by email
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email.toLocaleLowerCase() },
     });
     let updated: any;
 
-    // If the user is not found, throw an error
     if (!user) {
       throw new BadRequestException('User not found');
     }
 
-    // If the verification code does not match, throw an error
     if (user.emailVerificationCode !== dto.emailVerificationCode) {
       throw new BadRequestException('Invalid verification code');
     }
 
-    // Update the user's email verification status
     updated = await this.prisma.user.update({
       where: { email: dto.email.toLocaleLowerCase() },
       data: {
@@ -173,12 +170,11 @@ export class UserService {
       },
     });
 
-    // Exclude password from the user data before returning
     const { password, ...safeUser } = updated;
 
-    // Always return the safeUser regardless of the blockchain result
     return { safeUser };
   }
+
   async sendOtpToEmail(email: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: email },
@@ -201,6 +197,7 @@ export class UserService {
     );
     return { success: true, message: 'Verification code sent to email' };
   }
+
   async getDeviceInfoByUserId(userId: string) {
     const devices = await this.prisma.deviceInfo.findMany({
       where: {
@@ -307,7 +304,6 @@ export class UserService {
     }
   }
 
-
   async saveDeviceInfo(saveDeviceInfoDto: SaveDeviceInfoDto) {
     try {
       const { userId, ipAddress, deviceInfo } = saveDeviceInfoDto;
@@ -360,7 +356,108 @@ export class UserService {
     return safeUser;
   }
 
+  async getUserBalance(userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          totalEarnings: true,
+          pendingEarnings: true,
+          withdrawnAmount: true,
+        },
+      });
 
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      return {
+        totalEarnings: user.totalEarnings,
+        pendingEarnings: user.pendingEarnings,
+        withdrawnAmount: user.withdrawnAmount,
+        availableForWithdrawal: user.pendingEarnings,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async getUserStats(userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          totalEarnings: true,
+          pendingEarnings: true,
+          withdrawnAmount: true,
+          tasksCompleted: true,
+          tasksRejected: true,
+          rejectionRate: true,
+          canModerate: true,
+          moderatorSince: true,
+          moderatorVotes: true,
+          moderatorAccuracy: true,
+        },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const [
+        approvedSubmissions,
+        pendingSubmissions,
+        rejectedSubmissions,
+        pendingPayments,
+        completedPayments,
+      ] = await Promise.all([
+        this.prisma.taskSubmission.count({
+          where: { userId, status: 'Approved' },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { userId, status: 'PendingModeration' },
+        }),
+        this.prisma.taskSubmission.count({
+          where: { userId, status: 'Rejected' },
+        }),
+        this.prisma.payment.count({
+          where: { userId, status: 'Pending' },
+        }),
+        this.prisma.payment.count({
+          where: { userId, status: 'Completed' },
+        }),
+      ]);
+
+      return {
+        earnings: {
+          totalEarnings: user.totalEarnings,
+          pendingEarnings: user.pendingEarnings,
+          withdrawnAmount: user.withdrawnAmount,
+        },
+        tasks: {
+          completed: user.tasksCompleted,
+          rejected: user.tasksRejected,
+          rejectionRate: user.rejectionRate,
+          approved: approvedSubmissions,
+          pending: pendingSubmissions,
+          totalSubmissions: approvedSubmissions + pendingSubmissions + rejectedSubmissions,
+        },
+        payments: {
+          pending: pendingPayments,
+          completed: completedPayments,
+          total: pendingPayments + completedPayments,
+        },
+        moderation: {
+          canModerate: user.canModerate,
+          moderatorSince: user.moderatorSince,
+          totalVotes: user.moderatorVotes,
+          accuracy: user.moderatorAccuracy,
+        },
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
 
   async createResetToken(userId: string, token: string, expiry: Date) {
     try {
@@ -438,6 +535,4 @@ export class UserService {
       },
     });
   }
-
-
 }

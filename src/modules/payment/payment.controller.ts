@@ -7,13 +7,14 @@ import {
   Param,
   UseGuards,
   Request,
-  Query,
   Res,
+  Query,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { PaymentService } from './payment.service';
 import { RequestPaymentDto } from './dto/request-payment.dto';
 import { FindPaymentsDto } from './dto/find-payments.dto';
+import { FindMyPaymentsDto } from './dto/find-my-payments.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { JwtAuthGuard } from '@config/authentication/guards/jwt-auth.guard';
 import {
@@ -52,17 +53,11 @@ export class PaymentController {
     return this.paymentService.findAll(findPaymentsDto, req);
   }
 
-  @Get('my-payments')
+  @Patch('my-payments')
   @ApiOperation({ summary: 'Get my payment requests' })
   @ApiResponse({ status: 200, description: 'Payments retrieved successfully' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  getMyPayments(
-    @Request() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    return this.paymentService.getMyPayments(req.user.id, page, limit);
+  getMyPayments(@Request() req: any, @Body() findMyPaymentsDto: FindMyPaymentsDto) {
+    return this.paymentService.getMyPayments(findMyPaymentsDto, req.user.id);
   }
 
   @Get('stats')

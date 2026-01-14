@@ -15,7 +15,7 @@ import {
   Delete,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -29,7 +29,7 @@ import { FindDeletedUsersDto } from '../admin/dto/find-deleted-users.dto';
 @ApiTags('user')
 @Controller('user')
 export class UserController {
-  constructor(private userService: UserService) { }
+  constructor(private userService: UserService) {}
 
   @UseGuards(JwtAuthGuard)
   @Get('')
@@ -46,8 +46,25 @@ export class UserController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('balance')
+  @ApiOperation({ summary: 'Get user balance and earnings' })
+  @ApiResponse({ status: 200, description: 'Balance retrieved successfully' })
+  async getBalance(@Request() req) {
+    return this.userService.getUserBalance(req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('stats')
+  @ApiOperation({ summary: 'Get user statistics' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  async getStats(@Request() req) {
+    return this.userService.getUserStats(req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('deviceInfo/:id')
-  async getDeviceInfoById(@Param('  ') id: string) {
+  @ApiParam({ name: 'id', description: 'User ID' })
+  async getDeviceInfoById(@Param('id') id: string) {
     try {
       const devices = await this.userService.getDeviceInfoByUserId(id);
       return devices;
@@ -61,11 +78,7 @@ export class UserController {
 
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
-  changePassword(
-    @Request()
-    req,
-    @Body() changePasswordDto: ChangePasswordDto,
-  ) {
+  changePassword(@Request() req, @Body() changePasswordDto: ChangePasswordDto) {
     return this.userService.changePassword(req, changePasswordDto);
   }
 
@@ -76,21 +89,14 @@ export class UserController {
     return this.userService.update(updateUserDto);
   }
 
-
-
   @Get(':id')
   findOneUser(@Param('id') id: string) {
     return this.userService.findOneUser(id);
   }
-
 
   @UseGuards(JwtAuthGuard)
   @Post('save-device-info')
   async saveDeviceInfo(@Body() saveDeviceInfoDto: SaveDeviceInfoDto) {
     return this.userService.saveDeviceInfo(saveDeviceInfoDto);
   }
-
-
-
-
 }
