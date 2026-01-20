@@ -201,20 +201,19 @@ async findAllCampaigns({ page, limit, sortDto, filters }: FindAllCampaignsDto, r
       }
 
       const campaign = await this.prisma.campaign.findUnique({
-        where: { id, deletedAt: null },
-        include: {
-          tasks: {
-            where: { deletedAt: null },
-            orderBy: { createdAt: 'desc' },
-          },
-          _count: {
-            select: {
-              tasks: true,
-              userInteractions: true,
-            },
-          },
-        },
-      });
+  where: { id, deletedAt: null },
+  include: {
+    tasks: {
+      orderBy: { createdAt: 'desc' },
+    },
+    _count: {
+      select: {
+        tasks: true,
+        userInteractions: true,
+      },
+    },
+  },
+});
 
       if (!campaign) {
         throw new NotFoundException('Campaign not found');
