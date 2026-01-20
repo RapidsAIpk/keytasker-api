@@ -341,6 +341,7 @@ async findMySubmissions({ page, sortDto }: FindAllSubmissionsDto, req) {
               topicInstruction: true,
               basePayment: true,
               bonusPayment: true,
+              recipient: true,
             },
           },
         },
