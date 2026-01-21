@@ -79,6 +79,7 @@ model User {
   reservations         TaskReservation[]
   campaignInteractions UserCampaignInteraction[]
   resetTokens          ResetToken[]
+  connections          UserConnection[]
   deviceInfo           DeviceInfo?
 }
 
@@ -422,6 +423,20 @@ model Notification {
   deletedAt DateTime?
 }
 
+model UserConnection {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String    @db.ObjectId
+  socketId       String
+  deviceInfo     String?
+  isActive       Boolean   @default(true)
+  connectedAt    DateTime  @default(now())
+  disconnectedAt DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([socketId])
+}
+
 // ============================================
 // ADMIN & ANALYTICS
 // ============================================
@@ -637,6 +652,7 @@ enum NotificationType {
   NewTasksAvailable
   SupportResponse
   IdeaReviewed
+  System
 }
 
 enum ActivityType {

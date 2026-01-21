@@ -6,7 +6,8 @@ import {
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { FindNotificationsDto } from './dto/find-notifications.dto';
 import { SortEnum } from '@config/constants';
-
+import { sendEmail } from '@config/helpers';
+import { NotificationType } from '@prisma/client';
 @Injectable()
 export class NotificationService {
   constructor(private prisma: PrismaService) {}
@@ -163,4 +164,99 @@ export class NotificationService {
       throw error;
     }
   }
+
+// Add these methods to the NotificationService class
+
+/**
+ * Create notification (for internal use)
+ */
+async createNotification(data: {
+  userId: string;
+  type: NotificationType; // ← Use the enum type
+  title: string;
+  message: string;
+  sendEmail?: boolean;
+  userEmail?: string;
+}) {
+  try {
+    const notification = await this.prisma.notification.create({
+      data: {
+        userId: data.userId,
+        type: data.type, // ← Now it's properly typed
+        title: data.title,
+        message: data.message,
+      },
+    });
+
+    if (data.sendEmail && data.userEmail) {
+      try {
+        await sendEmail(
+          data.userEmail,
+          data.title,
+          data.message,
+        );
+      } catch (error) {
+        console.error('Email sending failed:', error.message);
+      }
+    }
+
+    return notification;
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Track WebSocket connection
+ */
+async trackConnection(userId: string, socketId: string, deviceInfo: string) {
+  try {
+    return await this.prisma.userConnection.create({
+      data: {
+        userId,
+        socketId,
+        deviceInfo,
+      },
+    });
+  } catch (error) {
+    console.error('Failed to track connection:', error);
+  }
+}
+
+/**
+ * Track WebSocket disconnection
+ */
+async trackDisconnection(socketId: string) {
+  try {
+    return await this.prisma.userConnection.updateMany({
+      where: {
+        socketId,
+        isActive: true,
+      },
+      data: {
+        isActive: false,
+        disconnectedAt: new Date(),
+      },
+    });
+  } catch (error) {
+    console.error('Failed to track disconnection:', error);
+  }
+}
+
+/**
+ * Get active connections for a user
+ */
+async getActiveConnections(userId: string) {
+  try {
+    return await this.prisma.userConnection.findMany({
+      where: {
+        userId,
+        isActive: true,
+      },
+    });
+  } catch (error) {
+    return [];
+  }
+}
+
 }

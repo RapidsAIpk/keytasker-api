@@ -36,7 +36,10 @@ async function bootstrap() {
 
   app.useGlobalPipes(new ValidationPipe());
 
-  app.enableCors();
+  app.enableCors({
+  origin: '*',
+  credentials: true,
+});
   await app.listen(process.env.PORT || 6900);
 
   console.warn(`App is listening on port: 6900`);

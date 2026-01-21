@@ -19,17 +19,25 @@ import {
   ApiResponse,
   ApiParam,
 } from '@nestjs/swagger';
+import { NotificationGateway } from './notification.gateway';
+import { TestNotificationDto } from './dto/test-notification.dto';
 
 @ApiBearerAuth()
 @ApiTags('notifications')
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
 export class NotificationController {
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly notificationGateway: NotificationGateway,
+  ) {}
 
   @Patch('find-all')
   @ApiOperation({ summary: 'Get my notifications' })
-  @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Notifications retrieved successfully',
+  })
   findAll(@Request() req: any, @Body() findDto: FindNotificationsDto) {
     return this.notificationService.findAll(findDto, req.user.id);
   }
@@ -59,10 +67,59 @@ export class NotificationController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a notification' })
-  @ApiResponse({ status: 200, description: 'Notification deleted successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Notification deleted successfully',
+  })
   @ApiResponse({ status: 404, description: 'Notification not found' })
   @ApiParam({ name: 'id', description: 'Notification ID' })
   remove(@Param('id') id: string, @Request() req: any) {
     return this.notificationService.remove(id, req.user.id);
   }
+
+  // Add these new endpoints
+
+  @Get('connection-status')
+  @ApiOperation({ summary: 'Check if current user is connected to WebSocket' })
+  @ApiResponse({ status: 200, description: 'Connection status retrieved' })
+  async getConnectionStatus(@Request() req: any) {
+    const userId = req.user.id;
+    const isConnected = this.notificationGateway.isUserConnected(userId);
+    const connections =
+      await this.notificationService.getActiveConnections(userId);
+
+    return {
+      userId,
+      isConnected,
+      activeConnections: connections.length,
+      connections: connections.map((c) => ({
+        socketId: c.socketId,
+        deviceInfo: c.deviceInfo,
+        connectedAt: c.connectedAt,
+      })),
+    };
+  }
+
+@Post('test')
+@ApiOperation({ summary: 'Send test notification to yourself' })
+@ApiResponse({ status: 200, description: 'Test notification sent' })
+async testNotification(
+  @Request() req: any,
+  @Body() body: TestNotificationDto,
+) {
+  const userId = req.user.id;
+
+  const notification = await this.notificationService.createNotification({
+    userId,
+    type: body.type,
+    title: body.title,
+    message: body.message,
+  });
+
+  if (this.notificationGateway.isUserConnected(userId)) {
+    await this.notificationGateway.sendNotification(userId, notification);
+  }
+
+  return notification;
+}
 }
