@@ -68,9 +68,9 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
       const unreadCount = await this.notificationService.getUnreadCount(userId);
       client.emit('unread_count', unreadCount);
 
-      this.logger.log(`Client connected: ${client.id} (User: ${userId})`);
+      console.log(`Client connected: ${client.id} (User: ${userId})`);
     } catch (error) {
-      this.logger.error(`Connection error: ${error.message}`);
+      console.error(`Connection error: ${error.message}`);
       client.disconnect();
     }
   }
@@ -87,7 +87,7 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
       }
 
       await this.notificationService.trackDisconnection(client.id);
-      this.logger.log(`Client disconnected: ${client.id} (User: ${userId})`);
+      console.log(`Client disconnected: ${client.id} (User: ${userId})`);
     }
   }
 
