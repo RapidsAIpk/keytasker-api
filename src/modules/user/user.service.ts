@@ -21,10 +21,14 @@ import * as bcrypt from 'bcrypt';
 import { LogoutDto } from './dto/logout.dto';
 import { UserRole, AccountStatus, Prisma } from '@prisma/client';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { MediaService } from '@modules/media/media.service';
 
 @Injectable()
 export class UserService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly mediaService: MediaService,
+  ) {}
 
   async createAdmin(data: {
     fullName: string;
@@ -220,33 +224,34 @@ export class UserService {
     });
   }
 
-  async update(updateUserDto: UpdateUserDto) {
+async update(updateUserDto: UpdateUserDto, file: Express.Multer.File, reqUser?: any) {
     try {
-      const { id, email, fullName, profilePicture, phoneNumber, country } =
-        updateUserDto;
-
+      const { fullName, phoneNumber, country } = updateUserDto;
+console.log('updateUserDto:', updateUserDto);
       const existingUser = await this.prisma.user.findUnique({
-        where: { id },
+        where: { id: reqUser.id },
       });
 
       if (!existingUser) {
         throw new NotFoundException('User not found');
       }
 
-      const userWithEmail = await this.findByEmail(email.toLocaleLowerCase());
-      if (userWithEmail && userWithEmail.id !== id) {
-        throw new BadRequestException('User with this email already exists!');
+      const updateData: any = {};
+
+      if (fullName) updateData.fullName = fullName;
+      if (phoneNumber) updateData.phoneNumber = phoneNumber;
+      if (country) updateData.country = country;
+
+      if (file) {
+        const uploadedMedia = await this.mediaService.create(file);
+        console.log('profile uploaded:', uploadedMedia);
+        updateData.profilePicture = uploadedMedia.fileUrl;
+        updateData.mediaId = uploadedMedia.id;
       }
 
       const updatedUser = await this.prisma.user.update({
-        where: { id },
-        data: {
-          fullName,
-          email: email.toLocaleLowerCase(),
-          profilePicture,
-          phoneNumber,
-          country,
-        },
+        where: { id: reqUser.id },
+        data: updateData,
       });
 
       const { password, ...safeUpdatedUser } = updatedUser;
@@ -440,7 +445,8 @@ export class UserService {
           rejectionRate: user.rejectionRate,
           approved: approvedSubmissions,
           pending: pendingSubmissions,
-          totalSubmissions: approvedSubmissions + pendingSubmissions + rejectedSubmissions,
+          totalSubmissions:
+            approvedSubmissions + pendingSubmissions + rejectedSubmissions,
         },
         payments: {
           pending: pendingPayments,
