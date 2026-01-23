@@ -323,69 +323,96 @@ async findPendingSubmissions(
     }
   }
 
-  /**
-   * Check if submission should be finalized based on votes
-   */
-  private async checkAndFinalizeSubmission(
-    submissionId: string,
-    voteType: VoteType,
-    minVotes: number,
-    maxVotes: number,
-  ) {
-    const submission = await this.prisma.taskSubmission.findUnique({
-      where: { id: submissionId },
-      include: {
-        moderationVotes: true,
-        task: true,
-        user: true,
-      },
-    });
+/**
+ * Check if submission should be finalized based on votes
+ */
+private async checkAndFinalizeSubmission(
+  submissionId: string,
+  voteType: VoteType,
+  minVotes: number,
+  maxVotes: number,
+) {
+  const submission = await this.prisma.taskSubmission.findUnique({
+    where: { id: submissionId },
+    include: {
+      moderationVotes: true,
+      task: true,
+      user: true,
+    },
+  });
 
-    if (!submission) return;
+  if (!submission) return;
 
-    // Get vote counts for the current phase
-    let totalVotes, approveVotes, rejectVotes;
-    
-    if (voteType === 'Base') {
-      totalVotes = submission.baseTotalVotes;
-      approveVotes = submission.baseApproveVotes;
-      rejectVotes = submission.baseRejectVotes;
-    } else {
-      totalVotes = submission.bonusTotalVotes;
-      approveVotes = submission.bonusApproveVotes;
-      rejectVotes = submission.bonusRejectVotes;
-    }
-
-    // Check if we have minimum votes
-    if (totalVotes < minVotes) return;
-
-    // Check for clear majority
-    const hasApprovalMajority = approveVotes > rejectVotes && approveVotes >= Math.ceil(totalVotes / 2);
-    const hasRejectionMajority = rejectVotes > approveVotes && rejectVotes >= Math.ceil(totalVotes / 2);
-
-    // If we have a clear majority, finalize
-    if (hasApprovalMajority || hasRejectionMajority) {
-      await this.finalizeSubmission(submissionId, voteType, hasApprovalMajority);
-      return;
-    }
-
-    // If votes are tied and we haven't reached max votes, mark as under review
-    if (approveVotes === rejectVotes && totalVotes < maxVotes) {
-      await this.prisma.taskSubmission.update({
-        where: { id: submissionId },
-        data: {
-          status: SubmissionStatus.UnderReview,
-          needsAdditionalVotes: true,
-        },
-      });
-      return;
-    }
-
-    // If we've reached max votes, finalize based on majority
-    if (totalVotes >= maxVotes) {
-      await this.finalizeSubmission(submissionId, voteType, approveVotes > rejectVotes);
-    }
+  // Get vote counts for the current phase
+  let totalVotes, approveVotes, rejectVotes;
+  
+  if (voteType === 'Base') {
+    totalVotes = submission.baseTotalVotes;
+    approveVotes = submission.baseApproveVotes;
+    rejectVotes = submission.baseRejectVotes;
+  } else {
+    totalVotes = submission.bonusTotalVotes;
+    approveVotes = submission.bonusApproveVotes;
+    rejectVotes = submission.bonusRejectVotes;
   }
+
+  console.log('=== VOTING LOGIC START ===');
+  console.log('Submission ID:', submissionId);
+  console.log('Vote Type:', voteType);
+  console.log('Total Votes:', totalVotes);
+  console.log('Approve Votes:', approveVotes);
+  console.log('Reject Votes:', rejectVotes);
+  console.log('Min Votes Required:', minVotes);
+  console.log('Max Votes Required:', maxVotes);
+
+  // Need at least minVotes (3) before checking
+  if (totalVotes < minVotes) {
+    console.log('❌ Not enough votes yet. Need', minVotes, 'but have', totalVotes);
+    console.log('=== VOTING LOGIC END ===\n');
+    return;
+  }
+
+  // After exactly 3 votes
+  if (totalVotes === minVotes) {
+    console.log('✅ Reached minimum votes (3)');
+    
+    // Check if unanimous (3-0)
+    if (approveVotes === 3) {
+      console.log('🎉 UNANIMOUS APPROVAL (3-0) - Finalizing as APPROVED');
+      console.log('=== VOTING LOGIC END ===\n');
+      await this.finalizeSubmission(submissionId, voteType, true);
+      return;
+    }
+    if (rejectVotes === 3) {
+      console.log('🎉 UNANIMOUS REJECTION (3-0) - Finalizing as REJECTED');
+      console.log('=== VOTING LOGIC END ===\n');
+      await this.finalizeSubmission(submissionId, voteType, false);
+      return;
+    }
+    
+    // If 2-1 split, keep as PendingModeration and continue to 5 votes
+    console.log('⚠️ SPLIT DECISION (2-1) - Keeping as PENDING, need 2 more votes (total 5)');
+    console.log('Current: Approve=' + approveVotes + ', Reject=' + rejectVotes);
+    console.log('Status remains: PendingModeration');
+    console.log('=== VOTING LOGIC END ===\n');
+    // Do NOT update status - keep as PendingModeration
+    return;
+  }
+
+  // After 5 or more votes, finalize based on majority
+  if (totalVotes >= maxVotes) {
+    console.log('✅ Reached maximum votes (5)');
+    const finalDecision = approveVotes > rejectVotes;
+    console.log('🎉 FINAL DECISION:', finalDecision ? 'APPROVED' : 'REJECTED');
+    console.log('Final count: Approve=' + approveVotes + ', Reject=' + rejectVotes);
+    console.log('=== VOTING LOGIC END ===\n');
+    await this.finalizeSubmission(submissionId, voteType, finalDecision);
+  } else {
+    console.log('⏳ Between min and max votes. Current:', totalVotes, 'Need:', maxVotes);
+    console.log('=== VOTING LOGIC END ===\n');
+  }
+}
+
 
   /**
    * Finalize a submission (approve or reject) for either base or bonus
